@@ -13,6 +13,12 @@
 python -m pip install -r requirements.txt
 ```
 
+该命令也会安装文字识别组件，用于读取底池、跟注额和操作按钮文字。安装完成后可用下面的命令确认：
+
+```powershell
+python -c "from rapidocr_onnxruntime import RapidOCR; print('OCR OK')"
+```
+
 需要运行深度牌面模型或 Hugging Face 教师模型时，再安装：
 
 ```powershell

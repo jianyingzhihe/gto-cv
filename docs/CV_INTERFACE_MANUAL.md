@@ -10,7 +10,7 @@
 
 ```powershell
 cd E:\dezhou
-python gto.py screen-cv --bbox-file "video_frames\screen_calibrate\analysis_bbox.json" --lock-layout --hero-name "鱼寻欢" --trigger frame --every 1 --min-confidence 0.35 --ocr-scale 0.65 --dealer-refresh-frames 4 --console-mode full --output-dir "video_frames\screen_live" --show-overlay --format text
+python gto.py screen-cv --bbox-file "video_frames\screen_calibrate\bbox.json" --lock-layout --hero-name "鱼寻欢" --trigger frame --every 1 --min-confidence 0.35 --ocr-scale 0.65 --dealer-refresh-frames 4 --console-mode full --output-dir "video_frames\screen_live" --show-overlay --format text
 ```
 
 - 终端会持续打印完整牌桌状态。
@@ -61,7 +61,16 @@ video_frames\screen_calibrate\analysis_bbox.json
 Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_pick_hero_cards_command.txt")
 ```
 
-依次圈 H1 和 H2，确认后会保存手牌固定相对位置。随后直接使用第 1 节的 CV 启动命令。
+依次圈 H1 和 H2：
+
+- H1 要包含左牌可读的点数和花色，不要包含头像、昵称或桌边。
+- H2 要从右牌自己的点数角开始圈，只包含右牌可读部分，不能把左牌与右牌重叠的区域一起圈进去。
+
+确认后会保存手牌固定相对位置，并生成 `run_live_overlay_command.txt`。此后应运行这个新生成的命令，而不是继续使用未带手牌框的旧命令：
+
+```powershell
+Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_live_overlay_command.txt")
+```
 
 如果脚本已生成 `run_live_overlay_command.txt`，也可以运行它进行覆盖层检查；注意旧版生成文件可能带 `--with-advice`，那一项与 CV 无关。日常纯 CV 请优先使用第 1 节命令。
 
@@ -73,7 +82,7 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_
 | --- | --- | --- |
 | `--pick-bbox` | 手工选择第一层外框 | 仅首次/缩放变化时用 |
 | `--bbox "x,y,w,h"` | 直接传入外框 | 临时调试用，不建议把 `x,y,w,h` 字样原样复制 |
-| `--bbox-file path` | 从文件读校准外框 | 日常使用 `analysis_bbox.json` |
+| `--bbox-file path` | 从文件读校准外框 | 日常使用手工外框 `bbox.json`；程序会自动读取同目录的内部牌桌框 `analysis_bbox.json` |
 | `--latest-bbox` | 读取最近一次保存的外框 | 临时恢复用 |
 | `--monitor 1` | 选择显示器编号 | 多屏时指定 |
 | `--hero-name "鱼寻欢"` | 用固定昵称辅助定位英雄座位 | 日常保留 |
@@ -119,7 +128,34 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_
 | `--card-sample-interval 30` | 卡牌样本采样间隔 | 默认即可 |
 | `--card-sample-limit 1000` | 卡牌样本上限 | 默认即可 |
 
-## 4. CV 状态数据接口
+## 4. 换电脑或新显示比例：先预检，再开实时流
+
+新电脑、不同显示缩放比例、不同腾讯会议窗口大小，都不能直接复用旧电脑的手牌相对位置。请完整执行第 2 节的第 1、2 步，然后先运行一帧预检：
+
+```powershell
+Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_preflight_command.txt")
+```
+
+预检正常的最低条件是：
+
+- 覆盖层的 H1/H2 分别落在底部两张真实手牌上。
+- `hero.cards` 有两张牌，而不是 `[]`、一张牌或带 `?` 的牌。
+- `ocr_mode` 不是 `disabled`。
+
+若看到 `fallback_fixed_roi`、`hero_cards_incomplete` 或 `hero.cards: []`，这不是屏幕抓取失败，而是程序没有在当前窗口中找到手牌，已经退回到不适用的固定裁剪位置。立刻按 `Ctrl+C` 停止实时程序，执行第 2 节第 3 步的手牌框校准，再执行新生成的 `run_live_overlay_command.txt`。
+
+`hero_turn_not_confirmed` 出现在上述情况之后，是安全保护结果：手牌不完整时，程序不会给出可操作的建议。应先修复 H1/H2，不要先调整行动判断。
+
+若预检或终端显示 `ocr_mode: disabled`，说明当前 Python 环境缺少文字识别组件；在项目目录执行：
+
+```powershell
+python -m pip install -r requirements.txt
+python -c "from rapidocr_onnxruntime import RapidOCR; print('OCR OK')"
+```
+
+再重新运行预检。文字识别恢复前，底池、跟注额和按钮文字可能为空，不能把相应数值当作可靠输入。
+
+## 5. CV 状态数据接口
 
 `current_state.json` 始终保存最新一次结果。外部程序只需要轮询这个文件即可，不需要读取终端文本。
 
@@ -179,7 +215,7 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_
 
 `events.jsonl` 是历史事件流：每一行是一份完整 JSON 状态。适合后续做视频回放、统计或状态机，不要把它当普通 CSV 读取。
 
-## 5. 覆盖层和异常保存接口
+## 6. 覆盖层和异常保存接口
 
 | 路径 | 内容 | 何时看 |
 | --- | --- | --- |
@@ -190,8 +226,8 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_
 | `video_frames\screen_live\card_debug\` | 卡牌识别调试包 | 数字/花色识别错误时看 |
 | `video_frames\screen_live\card_samples\` | 采集的手牌/公共牌样本 | 离线重新识别和人工校对 |
 | `video_frames\screen_live\card_sample_predictions.csv` | 卡牌样本逐项预测及来源 | 生成数字/花色人工校对队列时使用 |
-| `video_frames\screen_calibrate\bbox.json` | 第一次外框 | 重做校准时参考 |
-| `video_frames\screen_calibrate\analysis_bbox.json` | 已确认的固定布局基准 | 日常 `--bbox-file` 使用 |
+| `video_frames\screen_calibrate\bbox.json` | 手工确认的完整窗口外框 | 日常 `--bbox-file` 使用，也是底部操作区的坐标来源 |
+| `video_frames\screen_calibrate\analysis_bbox.json` | 已确认的内部牌桌框 | 由程序随 `bbox.json` 自动读取，用于牌面、庄家和座位识别 |
 
 一个 `card_debug` 样本通常包含：
 
@@ -207,17 +243,19 @@ metadata.json             裁剪位置、结果、置信度和原因
 
 排错顺序固定为：先看 `diagnostic_overlay.png` 的框是否正确，再看 `*_card.png`，再看 `*_rank.png` / `*_suit.png`。不要先假设是分类器错误，裁剪位置错也会导致任何模型输出错误。
 
-## 6. 异常状态的含义
+## 7. 异常状态的含义
 
 | 现象/文本 | CV 含义 | 应该做什么 |
 | --- | --- | --- |
 | `poker table occluded` | 牌桌区域被其他窗口、动画或画面切换遮挡 | 看 `problem_frames`，等稳定画面后恢复 |
-| `hero_cards_incomplete` | H1/H2 未识别完整，或只有一张牌可见 | 看覆盖层；持续发生则重新执行第 2 节第 3 步 |
+| `hero_cards_incomplete` | H1/H2 未识别完整，或只有一张牌可见 | 看覆盖层；若出现 `fallback_fixed_roi` 或 `hero.cards: []`，先重新校准 H1/H2；持续发生则完整重做第 2 节 |
+| `hero_turn_not_confirmed` | 尚无足够证据确认轮到 Hero | 若同时有 `hero_cards_incomplete`，先修复 H1/H2；否则再检查底部操作区是否完整可见 |
+| `ocr_mode: disabled` | 当前 Python 缺少文字识别组件，或启动时显式关闭了 OCR | 执行 `python -m pip install -r requirements.txt`，然后重新启动 |
 | `hero_action_controls_not_visible` | Hero 的底部操作区当前不可见 | 仅表示无法从按钮确认是否轮到 Hero；牌桌信息仍可继续读取 |
 | 手牌/公共牌出现 `?` | 当前裁剪或分类置信度不足 | 查看 `card_debug`，不要把 `?` 强行当成真实牌 |
 | 框跑到头像/桌面 logo | 当前布局不匹配或尚未锁定正确 H1/H2 | 重新执行三步定位，然后用 `--lock-layout` |
 
-## 7. 离线视频与卡牌回放接口
+## 8. 离线视频与卡牌回放接口
 
 ### 视频 CV
 
@@ -241,7 +279,7 @@ python gto.py replay-fixed-card-samples --samples-dir "video_frames\screen_live\
 
 可选增加 `--old-queue-csv <旧校对队列>`，把完全相同的历史人工标签迁移过去；迁移后仍应在校对界面抽查，不把旧标签当成新模型真值。
 
-## 8. 人工校对接口
+## 9. 人工校对接口
 
 ### 生成待校对队列
 
@@ -278,7 +316,7 @@ video_frames\screen_live\glyph_label_queue\glyph_label_queue.csv
 
 其中 `final_label` 是最终人工标签，`ignored` 表示该整张候选不是可训练/可评估的牌面。校对服务器启动失败且提示 `label_id not found` 时，说明浏览器页面仍指向旧队列；关闭旧页面、用当前 CSV 重新启动服务器并刷新即可。
 
-## 9. Python 级接口
+## 10. Python 级接口
 
 供其他本地脚本调用的核心函数在 `gto_cli` 包中：
 
@@ -292,7 +330,7 @@ video_frames\screen_live\glyph_label_queue\glyph_label_queue.csv
 
 外部代码推荐优先消费 `current_state.json` 或 `events.jsonl`，不要耦合终端文本或覆盖层像素。
 
-## 10. CV 工作流速查
+## 11. CV 工作流速查
 
 ```text
 第一次/窗口比例变化

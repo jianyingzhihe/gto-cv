@@ -1,6 +1,6 @@
 # 实时牌桌 CV + GTO 操作手册
 
-更新时间：2026-07-28
+更新时间：2026-08-11
 
 这份手册对应当前 `E:\dezhou` 最新版本。默认终端使用精简 advice
 模式；完整牌桌数据继续写入覆盖层、`current_state.json` 和
@@ -45,10 +45,20 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_review_au
 - 青色框不准：按 `R`，重新拖动精确牌桌框，再按 Enter 或 Space。
 - 想取消：按 `C` 或 Esc。
 
-接受后会保存 `analysis_bbox.json`。这个精确框会在本次布局中固定，不会继续
-自动缩小或漂移。
+接受后会保存 `analysis_bbox.json`。这个文件只描述内部牌桌；第一步手工拖出的
+`bbox.json` 仍是完整窗口和底部操作区的唯一坐标来源。内部牌桌框会在本次布局中固定，不会继续自动缩小或漂移。
 
-### 第三步：启动全部覆盖层和实时 advice
+### 第三步：先做一帧预检，再启动全部覆盖层和实时建议
+
+先运行：
+
+```powershell
+Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_preflight_command.txt")
+```
+
+确认覆盖层中的 H1/H2 落在两张真实手牌上，且输出中的 `hero.cards` 有两张完整牌、`ocr_mode` 不是 `disabled`。若不满足，先按第 3 节重新校准手牌；不要直接启动实时建议。
+
+预检通过后运行：
 
 ```powershell
 Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_overlay_command.txt")
@@ -64,8 +74,7 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_
 
 看到覆盖层后不需要再运行另一个 live 命令。按 `Ctrl+C` 停止。
 
-如果只有 `H1/H2` 手牌框不准，再执行本手册第 3 节的手牌框校准。其他情况下，
-第一次使用到这里就结束了。
+如果只有 `H1/H2` 手牌框不准，再执行本手册第 3 节的手牌框校准。其他情况下，第一次使用到这里就结束了。
 
 ## 1. 每次开始
 
@@ -124,7 +133,7 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_review_au
 Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_overlay_command.txt")
 ```
 
-覆盖层中的 `H1/H2` 应完整包含两张手牌的白色牌面。若只有这里不准，运行：
+覆盖层中的 `H1/H2` 应分别落在两张手牌自己的可读牌面上。H1 包含左牌的点数和花色；H2 从右牌自己的点数角开始，不能包含与左牌重叠的区域、头像或昵称。若只有这里不准，运行：
 
 ```powershell
 Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_pick_hero_cards_command.txt")
@@ -136,8 +145,26 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_
 Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_live_overlay_command.txt")
 ```
 
-手牌框按牌桌比例保存。同一比例只发生整体缩放时通常不需要重画；牌桌 UI
-比例或布局明显变化时重新执行本节。
+手牌框按牌桌比例保存。同一比例只发生整体缩放时通常不需要重画；换电脑、牌桌 UI 比例或布局明显变化时必须重新执行本节。
+
+## 3.1 换电脑时的必做检查
+
+换电脑后，屏幕抓取、庄家、桌面和座位都正常，并不代表手牌框仍然可用。不同的显示缩放、腾讯会议窗口大小或窗口边距会让旧手牌相对位置失效。不要跳过第二步后直接开实时流。
+
+完整顺序是：第一步框完整窗口，第二步接受或重画内部牌桌框，执行第 4 节的一帧预检；如果 H1/H2 没有落在两张真实手牌上，再执行本节的手牌框校准。
+
+出现以下任一项时，表示程序未找到真实手牌而回退到了不适用的固定位置：`fallback_fixed_roi`、`hero.cards: []`、`hero_cards_incomplete`。这不是屏幕抓取失败。按 `Ctrl+C` 停止，重新画 H1/H2，然后执行新生成的 `run_live_overlay_command.txt`。
+
+随后出现的 `hero_turn_not_confirmed` 是安全保护：两张手牌不完整时，程序拒绝给出建议。先修复手牌框，不要先处理行动判断。
+
+若状态里出现 `ocr_mode: disabled`，则当前电脑的 Python 少了文字识别组件。执行：
+
+```powershell
+python -m pip install -r requirements.txt
+python -c "from rapidocr_onnxruntime import RapidOCR; print('OCR OK')"
+```
+
+重新启动预检。未恢复前，底池、跟注额和按钮文字不应被当作可靠结果。
 
 ## 4. 正式运行前预检
 
@@ -150,6 +177,7 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_
 重点检查：
 
 - `hero.cards` 是两张完整手牌。
+- `ocr_mode` 不是 `disabled`。
 - `table.dealer_seat` 正确。
 - `table.pot_bb` 和可见下注合理。
 - `hero_turn.is_turn` 只有出现操作按钮时为 `true`。
@@ -298,7 +326,7 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_live\run_apply_card_sam
 
 1. 打开 `latest_overlay.png`。
 2. 检查 `H1/H2` 是否完整覆盖牌面。
-3. 若框偏了，重新执行第 3 节。
+3. 若框偏了，或看到 `fallback_fixed_roi` / `hero.cards: []`，重新执行第 3 节。
 4. 框正确但字符错，检查最新 `card_debug\...\*_rank.png` 和
    `*_suit.png`，这是分类器问题。
 
@@ -307,6 +335,12 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_live\run_apply_card_sam
 1. 确认底部红色操作按钮确实出现。
 2. 检查牌桌底部是否被腾讯会议工具栏或其他窗口遮挡。
 3. 查看覆盖层是否完整包含操作按钮区域。
+
+终端出现 `ocr_mode: disabled`：
+
+1. 在项目目录执行 `python -m pip install -r requirements.txt`。
+2. 执行 `python -c "from rapidocr_onnxruntime import RapidOCR; print('OCR OK')"`。
+3. 重启 `screen-cv`，再跑一次第 4 节预检。
 
 模型更新后仍显示旧结果：
 

@@ -3,6 +3,8 @@ numpy>=1.24
 opencv-python>=4.8
 mss>=9.0
 Pillow>=10.0
+# 读取底池、跟注额和按钮文字；缺少它时状态会显示 ocr_mode: disabled。
+rapidocr-onnxruntime>=1.3
 
 # Test runner.
 pytest>=8.0
