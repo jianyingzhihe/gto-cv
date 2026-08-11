@@ -1,0 +1,21 @@
+{
+  "hero": {
+    "cards": ["As", "Ks"],
+    "position": "BTN",
+    "stack_bb": 100
+  },
+  "table": {
+    "pot_bb": 1.5,
+    "to_call_bb": 0,
+    "effective_stack_bb": 100,
+    "board": []
+  },
+  "action": {
+    "scenario": "rfi",
+    "street": "preflop"
+  },
+  "villain": {
+    "profile": "standard"
+  },
+  "seed": 7
+}

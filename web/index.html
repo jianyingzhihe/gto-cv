@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>德州扑克练习盘</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <p class="kicker">从零开始练</p>
+          <h1>德州扑克练习盘</h1>
+          <a class="table-mode-link" href="table.html">打开 AI 连续桌</a>
+        </div>
+        <div class="scorebox">
+          <span>得分</span>
+          <strong id="scoreText">0 / 0</strong>
+        </div>
+      </header>
+
+      <section class="controls" aria-label="难度">
+        <button class="mode active" data-mode="quiz">单题练习</button>
+        <button class="mode" data-mode="game">完整对局</button>
+      </section>
+
+      <section class="controls game-kind-controls" id="gameKindControls" aria-label="对局类型" hidden>
+        <button class="game-kind active" data-game-kind="small">小对局</button>
+        <button class="game-kind" data-game-kind="big">大对局</button>
+        <button class="game-kind" data-game-kind="ai">AI 对战</button>
+      </section>
+
+      <section class="controls point-controls" id="pointControls" aria-label="起始 pt" hidden>
+        <button class="point-choice active" data-points="50">50 pt</button>
+        <button class="point-choice" data-points="100">100 pt</button>
+        <button class="point-choice" data-points="200">200 pt</button>
+        <button class="point-choice" data-points="500">500 pt</button>
+        <label class="custom-point">
+          <span>自选 pt</span>
+          <input id="customPoints" type="number" min="5" max="5000" step="5" value="50" />
+        </label>
+        <button id="applyCustomPoints" type="button">应用</button>
+      </section>
+
+      <section class="controls" aria-label="难度">
+        <button class="level active" data-level="simple">简单</button>
+        <button class="level" data-level="medium">中等</button>
+        <button class="level" data-level="advanced">高级</button>
+        <button class="level" data-level="master">大师</button>
+      </section>
+
+      <section class="notice" id="noticeBox" hidden></section>
+
+      <section class="global-panel" id="globalPanel" hidden>
+        <div class="global-head">
+          <div>
+            <p class="label">全局记录</p>
+            <h2>复盘用</h2>
+          </div>
+          <span id="globalSummary">还没有记录</span>
+        </div>
+        <div class="score-panel" id="scorePanel" hidden>
+          <div>
+            <p class="label">AI 对战积分</p>
+            <h2 id="scoreNow">0</h2>
+            <p id="scoreChange">上一手 0</p>
+          </div>
+          <div class="score-chart" id="scoreChart"></div>
+        </div>
+        <div id="globalList" class="global-list"></div>
+      </section>
+
+      <section class="table-area">
+        <section class="felt" aria-label="牌桌">
+          <div class="table-meta">
+            <span id="stageText">准备中</span>
+            <span id="moneyText">桌上已有 0 份</span>
+          </div>
+          <div class="board-row">
+            <p>公共牌</p>
+            <div id="boardCards" class="cards"></div>
+          </div>
+          <div class="hero-row">
+            <p>你的手牌</p>
+            <div id="heroCards" class="cards"></div>
+          </div>
+        </section>
+
+        <aside class="side-panel">
+          <div class="plain-box">
+            <p class="label">现在的情况</p>
+            <h2 id="spotTitle">正在发题...</h2>
+          </div>
+
+          <div class="plain-box">
+            <p class="label">提示</p>
+            <ul id="hintList"></ul>
+          </div>
+
+          <div class="plain-box attention-box" id="recentBox" hidden>
+            <p class="label">刚才别人的动作</p>
+            <ul id="recentList"></ul>
+          </div>
+
+          <div class="plain-box" id="playersBox" hidden>
+            <p class="label">桌上的人</p>
+            <div id="playerList" class="players"></div>
+          </div>
+
+          <div class="plain-box">
+            <p class="label">你怎么做？</p>
+            <div id="actionButtons" class="actions"></div>
+          </div>
+
+          <div class="plain-box" id="logBox" hidden>
+            <p class="label">刚才发生了什么</p>
+            <ul id="logList"></ul>
+          </div>
+        </aside>
+      </section>
+
+      <section class="result-panel" id="resultPanel" hidden>
+        <div>
+          <p class="label">结果</p>
+          <h2 id="resultText"></h2>
+        </div>
+        <div>
+          <p class="label">讲解</p>
+          <ul id="afterList"></ul>
+        </div>
+      </section>
+
+      <footer class="footerbar">
+        <button id="nextButton" type="button">下一题</button>
+        <button id="rulesButton" type="button">看基础规则</button>
+      </footer>
+
+      <dialog id="rulesDialog">
+        <h2>最基础规则</h2>
+        <ol>
+          <li>每个人先拿两张只有自己能看的牌。</li>
+          <li>桌上最多会发五张大家都能用的牌。</li>
+          <li>最后从你的牌和桌上的牌里，挑出最大的五张牌。</li>
+          <li>牌明显强，可以多出一些钱；牌明显弱，可以直接不玩。</li>
+          <li>如果别人要你补很多钱，你要更小心。</li>
+        </ol>
+        <button id="closeRules" type="button">知道了</button>
+      </dialog>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

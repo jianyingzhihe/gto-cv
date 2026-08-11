@@ -1,0 +1,22 @@
+{
+  "hero": {
+    "cards": ["As", "Ks"],
+    "position": "CO",
+    "gto_position": "CO",
+    "preflop_action_order": 5,
+    "stack_bb": 100
+  },
+  "table": {
+    "pot_bb": 12.5,
+    "to_call_bb": 7.5,
+    "effective_stack_bb": 100
+  },
+  "preflop": {
+    "action_history": [
+      {"position": "UTG", "action": "fold"},
+      {"position": "CO", "action": "raise", "amount_bb": 2.5, "is_hero": true},
+      {"position": "BTN", "action": "3bet", "amount_bb": 9},
+      {"action": "hero_to_act"}
+    ]
+  }
+}

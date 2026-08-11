@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI 连续桌</title>
+    <link rel="stylesheet" href="table.css" />
+  </head>
+  <body>
+    <main class="table-app">
+      <header class="table-hud">
+        <div class="brand">
+          <a href="/" class="back-link">练习页</a>
+          <div>
+            <p class="eyebrow">6 人局</p>
+            <h1>AI 连续桌</h1>
+            <p>你固定在最下面，Dealer 每手轮换。</p>
+          </div>
+        </div>
+
+        <section class="match-controls" aria-label="开局设置">
+          <div class="control-group">
+            <span>起始 pt</span>
+            <button class="pt-option active" type="button" data-points="50">50</button>
+            <button class="pt-option" type="button" data-points="100">100</button>
+            <button class="pt-option" type="button" data-points="200">200</button>
+            <button class="pt-option" type="button" data-points="500">500</button>
+          </div>
+          <label class="custom-pt">
+            <span>自选</span>
+            <input id="customPoints" type="number" min="5" max="5000" step="5" value="50" />
+          </label>
+          <div class="control-group level-group">
+            <span>电脑强度</span>
+            <button class="level-option active" type="button" data-level="simple">简单</button>
+            <button class="level-option" type="button" data-level="medium">中等</button>
+            <button class="level-option" type="button" data-level="advanced">高级</button>
+            <button class="level-option" type="button" data-level="master">大师</button>
+          </div>
+          <button id="startButton" class="start-button" type="button">开新连续桌</button>
+        </section>
+
+        <section class="score-readout" aria-label="积分">
+          <span>总积分</span>
+          <strong id="scoreText">0</strong>
+          <small id="scoreDelta">上一手 0</small>
+        </section>
+      </header>
+
+      <section class="table-notice" id="noticeText">正在开桌...</section>
+
+      <section class="play-layout">
+        <aside class="rail" aria-label="记录">
+          <section class="rail-block result-block" id="resultBlock" hidden>
+            <p class="rail-label">本手结果</p>
+            <h2 id="resultText">-</h2>
+          </section>
+
+          <section class="rail-block compact-score">
+            <div>
+              <p class="rail-label">积分走势</p>
+              <strong id="scoreNow">0</strong>
+            </div>
+            <div class="score-bars" id="scoreBars"></div>
+          </section>
+
+          <section class="rail-block">
+            <p class="rail-label">本手记录</p>
+            <ol class="log-list" id="handLog"></ol>
+          </section>
+
+          <section class="rail-block">
+            <p class="rail-label">全局记录</p>
+            <ol class="log-list" id="matchLog"></ol>
+          </section>
+        </aside>
+
+        <section class="table-column">
+          <section class="table-shell" aria-label="牌桌">
+            <div class="poker-table">
+              <div class="seat seat-top" id="seatTop"></div>
+              <div class="seat seat-left-top" id="seatLeftTop"></div>
+              <div class="seat seat-left-bottom" id="seatLeftBottom"></div>
+              <div class="seat seat-right-top" id="seatRightTop"></div>
+              <div class="seat seat-right-bottom" id="seatRightBottom"></div>
+              <div class="seat seat-hero" id="seatHero"></div>
+
+              <div class="table-center">
+                <div class="hand-line">
+                  <span id="handText">第 1 手</span>
+                  <span id="dealerText">Dealer：-</span>
+                </div>
+                <strong id="potText">桌上 0 pt</strong>
+                <div class="blind-line">
+                  <span id="smallBlindText">小盲 -</span>
+                  <span id="bigBlindText">大盲 -</span>
+                </div>
+                <div class="board-label">公共牌</div>
+                <div class="board-cards" id="boardCards"></div>
+                <p id="tableMessage">等待发牌。</p>
+              </div>
+            </div>
+          </section>
+
+          <footer class="action-dock">
+        <div class="turn-box">
+          <strong id="turnText">轮到你时会出按钮</strong>
+          <span id="needText">需要补 0 pt</span>
+        </div>
+            <div class="play-actions" id="actionButtons"></div>
+          </footer>
+        </section>
+      </section>
+    </main>
+
+    <script src="table.js"></script>
+  </body>
+</html>

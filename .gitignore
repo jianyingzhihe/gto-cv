@@ -1,0 +1,34 @@
+# Python caches and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Live captures, videos, calibration, review queues, and generated overlays.
+video_frames/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# Generated card-glyph crops and locally trained model artifacts.
+glyph_*.png
+docs/card_cv_error_ledger/assets/
+*.pt
+*.pth
+*.onnx
+*.pkl
+*.joblib
+
+# Keep only the reusable dealer-button templates, not screenshot examples.
+pict/*
+!pict/D.png
+!pict/D_purple.png
+!pict/D_live_gray.png
+
+# Local credentials and editor files
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/

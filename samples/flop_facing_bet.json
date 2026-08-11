@@ -1,0 +1,21 @@
+{
+  "hero": {
+    "cards": ["As", "Ks"],
+    "position": "BTN",
+    "stack_bb": 94
+  },
+  "table": {
+    "pot_bb": 12,
+    "to_call_bb": 4,
+    "effective_stack_bb": 94,
+    "board": ["Ah", "7d", "2c"]
+  },
+  "action": {
+    "scenario": "vs_open",
+    "street": "flop"
+  },
+  "villain": {
+    "profile": "standard"
+  },
+  "seed": 11
+}

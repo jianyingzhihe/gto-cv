@@ -1,0 +1,6 @@
+# Optional dependencies for Hugging Face teachers and local deep-card models.
+-r requirements.txt
+huggingface-hub>=0.23
+transformers>=4.41
+torch>=2.2
+torchvision>=0.17

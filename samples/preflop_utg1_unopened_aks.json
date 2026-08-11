@@ -1,0 +1,20 @@
+{
+  "hero": {
+    "cards": ["As", "Ks"],
+    "position": "UTG+1",
+    "gto_position": "UTG",
+    "preflop_action_order": 2,
+    "stack_bb": 100
+  },
+  "table": {
+    "pot_bb": 1.5,
+    "to_call_bb": 0,
+    "effective_stack_bb": 100
+  },
+  "preflop": {
+    "action_history": [
+      {"position": "UTG", "action": "fold"},
+      {"action": "hero_to_act"}
+    ]
+  }
+}
