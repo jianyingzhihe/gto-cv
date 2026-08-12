@@ -176,6 +176,7 @@ def analyze_realtime_video(
                     sample_index=sample_index,
                 )
                 hero_card_cache = stabilize_hero_cards(state, hero_card_cache)
+                state["source"]["dealer_button_cached"] = not refresh_dealer and dealer_button_cache is not None
                 preflop_tracker.update(state)
                 if with_advice:
                     attach_gto_advice(
@@ -185,7 +186,6 @@ def analyze_realtime_video(
                         villain_profile=villain_profile,
                     )
                 state["source"]["visual_diff"] = round(float(visual_diff), 4)
-                state["source"]["dealer_button_cached"] = not refresh_dealer and dealer_button_cache is not None
                 state["source"]["ocr_mode"] = ocr_mode
                 state["source"]["cv_timing_ms"] = frame_result.get("timing_ms") or {}
                 state["source"]["ocr_item_count"] = frame_result.get("ocr_item_count")

@@ -415,3 +415,62 @@ def test_tracker_records_hero_raise_then_later_three_bet() -> None:
     advice = build_gto_advice(facing_three_bet)
     assert advice["ready"]
     assert advice["scenario"] == "vs_3bet"
+
+
+def test_tracker_keeps_confirmed_layout_when_a_weak_dealer_match_rotates_positions() -> None:
+    tracker = PreflopActionTracker()
+    first = {
+        "ok": True,
+        "source": {"dealer_button_cached": False},
+        "confidence": {"dealer_button": 0.95, "pot_ocr": 0.86},
+        "table": {"street": "preflop", "board": [], "dealer_seat": "bottom_left", "dealer_seat_index": 1, "dealer_position": "BTN", "pot_bb": 21.6, "to_call_bb": 13.4},
+        "hero": {"seat": "bottom_hero", "position": "CO", "gto_position": "CO", "preflop_action_order": 5, "cards": ["9d", "7s"], "bet_bb": None},
+        "seats": [
+            seat("bottom_hero", "CO", 5, "active_or_showdown", None),
+            seat("bottom_left", "BTN", 6, "active_or_showdown", None),
+            seat("left", "SB", 7, "active_or_showdown", 0.4),
+            seat("top_left", "BB", 8, "active_or_showdown", 1.0),
+            seat("top", "UTG", 1, "active_or_showdown", 2.0),
+            seat("top_right", "UTG+1", 2, "active_or_showdown", 4.8),
+            seat("right", "LJ", 3, "active_or_showdown", 13.4),
+            seat("bottom_right", "HJ", 4, "folded_or_empty", None),
+        ],
+        "action_controls": {"visible": True, "actions": ["fold", "call", "raise"], "call_amount_bb": 13.4},
+        "hero_turn": {"is_turn": True},
+    }
+
+    tracker.update(first)
+    assert build_gto_advice(first)["reason"] == "preflop_scenario_not_supported"
+
+    weak_match = deepcopy(first)
+    weak_match["source"] = {"dealer_button_cached": False}
+    weak_match["confidence"]["dealer_button"] = 0.70
+    weak_match["table"].update({"dealer_seat": "top_left", "dealer_seat_index": 3, "dealer_position": "BTN"})
+    wrong_positions = {
+        "bottom_hero": ("LJ", "HJ", 3),
+        "bottom_left": ("HJ", "HJ", 4),
+        "left": ("CO", "CO", 5),
+        "top_left": ("BTN", "BTN", 6),
+        "top": ("SB", "SB", 7),
+        "top_right": ("BB", "BB", 8),
+        "right": ("UTG", "UTG", 1),
+        "bottom_right": ("UTG+1", "UTG", 2),
+    }
+    for item in weak_match["seats"]:
+        position, gto_position, order = wrong_positions[item["seat"]]
+        item.update({"position": position, "gto_position": gto_position, "preflop_action_order": order})
+        if item["seat"] == "bottom_hero":
+            weak_match["hero"].update({"position": position, "gto_position": gto_position, "preflop_action_order": order})
+
+    tracker.update(weak_match)
+
+    assert weak_match["source"]["seat_layout_stabilized"] is True
+    assert weak_match["table"]["dealer_seat"] == "bottom_left"
+    assert weak_match["hero"]["position"] == "CO"
+    assert [event["action"] for event in weak_match["preflop"]["action_history"][:-1]] == [
+        "raise",
+        "3bet",
+        "4bet",
+        "fold",
+    ]
+    assert build_gto_advice(weak_match)["reason"] == "preflop_scenario_not_supported"

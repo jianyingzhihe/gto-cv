@@ -767,6 +767,7 @@ def analyze_screen_stream(
                             sample_index=processed_frames - 1,
                         )
                         hero_card_cache = stabilize_hero_cards(state, hero_card_cache)
+                        state["source"]["dealer_button_cached"] = used_dealer_cache
                         preflop_tracker.update(state)
                         state["source"]["kind"] = "screen"
                         state["source"]["screen_region"] = dict(region)
@@ -774,7 +775,6 @@ def analyze_screen_stream(
                         state["source"]["action_controls_capture"] = frame_result.get("action_controls_capture")
                         state["source"]["monitor_region"] = dict(monitor_region)
                         state["source"]["auto_bbox"] = auto_bbox_info
-                        state["source"]["dealer_button_cached"] = used_dealer_cache
                         state["source"]["visual_diff"] = round(float(visual_diff), 4)
                         state["source"]["table_visibility"] = table_visibility
                         state["source"]["ocr_mode"] = ocr_mode

@@ -14,6 +14,7 @@ from typing import Any
 
 
 EPSILON_BB = 0.15
+TRUSTED_DEALER_CONFIDENCE = 0.85
 
 
 class PreflopActionTracker:
@@ -36,6 +37,7 @@ class PreflopActionTracker:
         self._previous_street: str | None = None
         self._sequence = 0
         self._sync_reason = "not_observed"
+        self._trusted_seat_layout: dict[str, Any] | None = None
 
     def update(self, state: dict[str, Any]) -> dict[str, Any]:
         """Attach ``preflop.action_history`` when the CV evidence is enough."""
@@ -46,6 +48,10 @@ class PreflopActionTracker:
             self._previous_street = street
             return state
 
+        # Stabilize a weak dealer match before it participates in the hand
+        # boundary key. A confirmed dealer change is still allowed to start a
+        # new hand immediately.
+        self._stabilize_seat_layout(state)
         hand_key = observed_hand_key(state)
         if hand_key is not None and (
             self._hand_key is None
@@ -53,6 +59,7 @@ class PreflopActionTracker:
             or self._previous_street not in {None, "preflop"}
         ):
             self._reset(hand_key)
+            self._stabilize_seat_layout(state)
 
         preflop = as_dict(state.get("preflop"))
         explicit_history = preflop.get("action_history")
@@ -114,6 +121,32 @@ class PreflopActionTracker:
         self._folded_seats = set()
         self._sequence = 0
         self._sync_reason = "new_hand_waiting_for_first_hero_decision"
+        self._trusted_seat_layout = None
+
+    def _stabilize_seat_layout(self, state: dict[str, Any]) -> None:
+        """Keep one hand's seat-to-position mapping stable across a weak D match."""
+
+        candidate = seat_layout(state)
+        if candidate is None:
+            return
+        trusted = self._trusted_seat_layout
+        if trusted is None:
+            if dealer_layout_is_trusted(state):
+                self._trusted_seat_layout = candidate
+            return
+        if candidate["dealer_seat"] == trusted["dealer_seat"]:
+            if dealer_layout_is_trusted(state):
+                self._trusted_seat_layout = candidate
+            return
+        if dealer_layout_is_trusted(state):
+            self._trusted_seat_layout = candidate
+            return
+
+        apply_seat_layout(state, trusted)
+        source = as_dict(state.get("source"))
+        source["seat_layout_stabilized"] = True
+        source["seat_layout_reason"] = "low_confidence_dealer_change"
+        state["source"] = source
 
     def _remember_observation(self, state: dict[str, Any]) -> None:
         self._previous_bets = seat_bets(state)
@@ -348,6 +381,63 @@ def observed_hand_key(state: dict[str, Any]) -> tuple[Any, ...] | None:
         return None
     table = as_dict(state.get("table"))
     return (cards, table.get("dealer_seat"))
+
+
+def dealer_layout_is_trusted(state: dict[str, Any]) -> bool:
+    source = as_dict(state.get("source"))
+    if source.get("dealer_button_cached") is True:
+        return False
+    confidence = number_or_none(as_dict(state.get("confidence")).get("dealer_button"))
+    return confidence is None or confidence >= TRUSTED_DEALER_CONFIDENCE
+
+
+def seat_layout(state: dict[str, Any]) -> dict[str, Any] | None:
+    table = as_dict(state.get("table"))
+    dealer_seat = str(table.get("dealer_seat") or "")
+    if not dealer_seat:
+        return None
+    seat_values: dict[str, dict[str, Any]] = {}
+    for item in list(state.get("seats") or []):
+        seat = as_dict(item)
+        name = str(seat.get("seat") or "")
+        if not name:
+            continue
+        seat_values[name] = {
+            key: seat.get(key)
+            for key in (
+                "position",
+                "gto_position",
+                "distance_from_dealer_clockwise",
+                "preflop_action_order",
+                "postflop_action_order",
+            )
+        }
+    return {
+        "dealer_seat": dealer_seat,
+        "dealer_seat_index": table.get("dealer_seat_index"),
+        "dealer_position": table.get("dealer_position"),
+        "seats": seat_values,
+    }
+
+
+def apply_seat_layout(state: dict[str, Any], layout: dict[str, Any]) -> None:
+    table = as_dict(state.get("table"))
+    table["dealer_seat"] = layout.get("dealer_seat")
+    table["dealer_seat_index"] = layout.get("dealer_seat_index")
+    table["dealer_position"] = layout.get("dealer_position")
+    state["table"] = table
+    by_seat = as_dict(layout.get("seats"))
+    hero = as_dict(state.get("hero"))
+    hero_seat = str(hero.get("seat") or "")
+    for item in list(state.get("seats") or []):
+        seat = as_dict(item)
+        values = as_dict(by_seat.get(str(seat.get("seat") or "")))
+        if not values:
+            continue
+        seat.update(values)
+        if str(seat.get("seat") or "") == hero_seat:
+            hero.update(values)
+    state["hero"] = hero
 
 
 def ordered_seats(state: dict[str, Any]) -> list[dict[str, Any]]:
