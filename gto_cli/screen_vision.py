@@ -47,6 +47,7 @@ from .video_vision import (
     normalized_suit_component,
     normalized_suit_component_by_label,
     run_ocr,
+    run_ocr_in_roi,
     scale_roi,
 )
 from .vision import find_dealer_button, find_dealer_button_component
@@ -65,6 +66,9 @@ DEALER_BUTTON_ANCHORS_8 = (
 
 AUTO_BBOX_TEMPLATE_RECHECK_LIMIT = 2
 AUTO_BBOX_SCORE_MAX_WIDTH = 1280
+# The controls live in the lower-right part of the manually selected full
+# client. OCR uses this crop, then restores box coordinates to the full client.
+ACTION_OCR_ROI = (0.40, 0.82, 1.0, 1.0)
 
 
 def active_python_gto_command() -> str:
@@ -112,6 +116,7 @@ def analyze_screen_stream(
     lock_layout: bool = False,
     hero_name: str | None = None,
     show_overlay: bool = False,
+    overlay_image_interval_sec: float = 2.0,
     pick_hero_cards: bool = False,
     hero_cards_file: Path | None = None,
     review_auto_bbox: bool = False,
@@ -197,6 +202,7 @@ def analyze_screen_stream(
     last_state_audit_signature: str | None = None
     dealer_button_cache: dict[str, Any] | None = None
     last_dealer_refresh_frame = -10**9
+    last_normal_action_buttons_visible = False
     dealer_cache_uses = 0
     card_roi_cache_signature: str | None = None
     card_roi_cache: dict[str, Any] | None = None
@@ -207,6 +213,7 @@ def analyze_screen_stream(
     last_console_signature: str | None = None
     last_console_emit_sec = float("-inf")
     printed_console_events = 0
+    last_overlay_image_sec = float("-inf")
 
     with mss.mss() as sct:
         # Keep the full poker client for action controls. The reviewed inner
@@ -584,6 +591,7 @@ def analyze_screen_stream(
                     timestamp = loop_started - started_at
                     frame_result_for_event: dict[str, Any] | None = None
                     diagnostic: Any | None = None
+                    screen_timing: dict[str, float] = {}
 
                     if next_auto_refresh is not None and loop_started >= next_auto_refresh:
                         search_frame = grab_bgr(sct, search_region)
@@ -597,6 +605,7 @@ def analyze_screen_stream(
                                 if not layout_locked:
                                     layout_profile = None
                                 last_dealer_refresh_frame = -10**9
+                                last_normal_action_buttons_visible = False
                                 card_roi_cache_signature = None
                                 card_roi_cache = None
                                 previous_visual = None
@@ -619,8 +628,10 @@ def analyze_screen_stream(
                                 )
                         next_auto_refresh = loop_started + max(1.0, float(auto_bbox_refresh_sec))
 
+                    capture_started = time.perf_counter()
                     outer_frame = grab_bgr(sct, search_region)
                     frame = crop_inner_from_outer(outer_frame, search_region, region)
+                    screen_timing["capture_and_crop_ms"] = elapsed_ms(capture_started)
                     processed_frames += 1
 
                     visual_small = cv2.resize(frame, (160, 112), interpolation=cv2.INTER_AREA)
@@ -664,6 +675,7 @@ def analyze_screen_stream(
                         # 位置绝不能继续沿用上一手的缓存，否则盲注和翻前顺序
                         # 会整体错位。
                         quick_action_controls = detect_action_controls(outer_frame, [])
+                        normal_action_buttons_visible = len(quick_action_controls.get("red_button_regions") or []) >= 2
                         if ocr_action_only and ocr is not None:
                             if quick_action_controls.get("visible"):
                                 frame_ocr = ocr
@@ -672,13 +684,17 @@ def analyze_screen_stream(
                                 frame_ocr = None
                                 ocr_mode = "action_only_skipped"
                         used_dealer_cache = False
-                        refresh_dealer = (
-                            dealer_button_cache is None
-                            or dealer_refresh_frames <= 1
-                            or processed_frames - last_dealer_refresh_frame >= max(1, int(dealer_refresh_frames))
-                            or visual_diff >= max(8.0, visual_threshold * 3.0)
-                            or len(quick_action_controls.get("red_button_regions") or []) >= 2
+                        refresh_dealer = should_refresh_dealer_button(
+                            dealer_button_cache=dealer_button_cache,
+                            dealer_refresh_frames=dealer_refresh_frames,
+                            processed_frames=processed_frames,
+                            last_dealer_refresh_frame=last_dealer_refresh_frame,
+                            visual_diff=visual_diff,
+                            visual_threshold=visual_threshold,
+                            normal_action_buttons_visible=normal_action_buttons_visible,
+                            previous_normal_action_buttons_visible=last_normal_action_buttons_visible,
                         )
+                        last_normal_action_buttons_visible = normal_action_buttons_visible
                         cards_hint = None
                         if trigger == "frame":
                             signature_rois = card_signature_rois(layout_profile)
@@ -730,11 +746,17 @@ def analyze_screen_stream(
                         # The first manually selected region is the complete poker client.
                         # Auto bbox may refine only the inner table, never the action-control input.
                         action_ocr = []
-                        if ocr is not None and (
-                            not ocr_action_only or (quick_action_controls or {}).get("visible")
-                        ):
-                            action_ocr = run_ocr(outer_frame, ocr, scale=ocr_scale)
-                        frame_result["action_controls"] = detect_action_controls(outer_frame, action_ocr)
+                        action_controls_ocr_mode = "skipped_no_button_surface"
+                        if ocr is not None and quick_action_controls.get("visible"):
+                            action_ocr_started = time.perf_counter()
+                            action_ocr = run_ocr_in_roi(outer_frame, ocr, ACTION_OCR_ROI, scale=ocr_scale)
+                            screen_timing["action_controls_ocr_ms"] = elapsed_ms(action_ocr_started)
+                            action_controls_ocr_mode = "bottom_roi"
+                        frame_result["action_controls"] = (
+                            detect_action_controls(outer_frame, action_ocr)
+                            if action_ocr
+                            else quick_action_controls
+                        )
                         frame_result["action_controls_capture"] = "full_client"
                         frame_result["ok"] = True
                         state = build_realtime_state(
@@ -756,6 +778,7 @@ def analyze_screen_stream(
                         state["source"]["visual_diff"] = round(float(visual_diff), 4)
                         state["source"]["table_visibility"] = table_visibility
                         state["source"]["ocr_mode"] = ocr_mode
+                        state["source"]["action_controls_ocr_mode"] = action_controls_ocr_mode
                         state["source"]["cv_timing_ms"] = frame_result.get("timing_ms") or {}
                         state["source"]["ocr_item_count"] = frame_result.get("ocr_item_count")
                         state["source"]["cards_hint_used"] = frame_result.get("cards_hint_used")
@@ -771,12 +794,14 @@ def analyze_screen_stream(
                                 "quality": layout_profile_quality(layout_profile),
                             }
                         if with_advice:
+                            advice_started = time.perf_counter()
                             attach_gto_advice(
                                 state,
                                 iterations=advice_iterations,
                                 effective_stack_bb=effective_stack_bb,
                                 villain_profile=villain_profile,
                             )
+                            screen_timing["advice_ms"] = elapsed_ms(advice_started)
                         reason = "frame"
                         signature = "frame" if trigger == "frame" else state_signature(state)
                         should_emit = True if trigger == "frame" else signature != previous_signature
@@ -802,29 +827,15 @@ def analyze_screen_stream(
                         should_emit = True if trigger == "frame" else signature != previous_signature
                         previous_signature = signature
 
+                    state.setdefault("source", {})["screen_timing_ms"] = screen_timing
                     if show_overlay:
-                        diagnostic = render_diagnostic_frame(
-                            cv2,
-                            frame,
-                            frame_result_for_event,
-                            state,
-                            layout_profile,
-                        )
-                        write_png(cv2, latest_overlay_path, diagnostic)
                         state["source"]["overlay_path"] = str(latest_overlay_path)
-                        full_window_diagnostic = render_full_window_diagnostic_frame(
-                            cv2,
-                            outer_frame,
-                            search_region,
-                            region,
-                            diagnostic,
-                        )
-                        write_png(cv2, latest_overlay_full_window_path, full_window_diagnostic)
                         state["source"]["overlay_full_window_path"] = str(latest_overlay_full_window_path)
                         state["source"]["overlay_window_active"] = overlay is not None
                         if overlay_error:
                             state["source"]["overlay_error"] = overlay_error
                         if overlay is not None:
+                            overlay_started = time.perf_counter()
                             try:
                                 overlay.update(
                                     analysis_region=region,
@@ -839,8 +850,35 @@ def analyze_screen_stream(
                                 overlay = None
                                 state["source"]["overlay_window_active"] = False
                                 state["source"]["overlay_error"] = overlay_error
+                            finally:
+                                screen_timing["overlay_window_ms"] = elapsed_ms(overlay_started)
+                        if should_write_overlay_snapshot(
+                            timestamp,
+                            last_overlay_image_sec,
+                            overlay_image_interval_sec,
+                        ):
+                            snapshot_started = time.perf_counter()
+                            diagnostic = render_diagnostic_frame(
+                                cv2,
+                                frame,
+                                frame_result_for_event,
+                                state,
+                                layout_profile,
+                            )
+                            write_png(cv2, latest_overlay_path, diagnostic)
+                            full_window_diagnostic = render_full_window_diagnostic_frame(
+                                cv2,
+                                outer_frame,
+                                search_region,
+                                region,
+                                diagnostic,
+                            )
+                            write_png(cv2, latest_overlay_full_window_path, full_window_diagnostic)
+                            screen_timing["overlay_snapshot_ms"] = elapsed_ms(snapshot_started)
+                            last_overlay_image_sec = timestamp
 
                     if should_emit:
+                        artifact_started = time.perf_counter()
                         event_index = emitted_events
                         basename = f"event_{event_index:04d}_{timestamp:08.3f}s".replace(".", "p")
                         event_frame_path = ""
@@ -965,6 +1003,7 @@ def analyze_screen_stream(
                                 last_state_audit_signature = audit_signature
                         state["source"]["frame_path"] = event_frame_path
                         state["source"]["annotated_path"] = annotated_path
+                        screen_timing["event_artifacts_ms"] = elapsed_ms(artifact_started)
                         state["source"]["analysis_ms"] = round((time.perf_counter() - loop_started) * 1000, 1)
                         state["event"] = {
                             "index": event_index,
@@ -1025,6 +1064,7 @@ def analyze_screen_stream(
         "layout_profile": layout_profile,
         "manual_hero_profile": str(hero_cards_file) if hero_cards_file is not None else None,
         "overlay_enabled": bool(show_overlay),
+        "overlay_image_interval_sec": overlay_image_interval_sec if show_overlay else None,
         "overlay_error": overlay_error,
         "advice_enabled": with_advice,
         "dealer_refresh_frames": dealer_refresh_frames,
@@ -1104,6 +1144,34 @@ def sleep_until_next(loop_started: float, every_sec: float) -> None:
     delay = max(0.0, float(every_sec) - elapsed)
     if delay:
         time.sleep(delay)
+
+
+def should_refresh_dealer_button(
+    *,
+    dealer_button_cache: dict[str, Any] | None,
+    dealer_refresh_frames: int,
+    processed_frames: int,
+    last_dealer_refresh_frame: int,
+    visual_diff: float,
+    visual_threshold: float,
+    normal_action_buttons_visible: bool,
+    previous_normal_action_buttons_visible: bool,
+) -> bool:
+    """Refresh when controls first appear, layout changes, or scheduled validation is due."""
+
+    return bool(
+        dealer_button_cache is None
+        or dealer_refresh_frames <= 1
+        or processed_frames - last_dealer_refresh_frame >= max(1, int(dealer_refresh_frames))
+        or visual_diff >= max(8.0, visual_threshold * 3.0)
+        or (normal_action_buttons_visible and not previous_normal_action_buttons_visible)
+    )
+
+
+def should_write_overlay_snapshot(timestamp: float, last_snapshot_sec: float, interval_sec: float) -> bool:
+    """Keep the live window current while rate-limiting large PNG writes."""
+
+    return interval_sec <= 0 or timestamp - last_snapshot_sec >= max(0.0, interval_sec)
 
 
 def card_signature_rois(

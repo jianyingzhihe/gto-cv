@@ -527,6 +527,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="show a transparent click-through screen overlay with table/card boxes, predictions, confidence, and CLIPPED warnings",
     )
+    screen_cv.add_argument(
+        "--overlay-image-interval",
+        type=float,
+        default=2.0,
+        help="seconds between latest_overlay PNG updates; the transparent overlay still updates every processed frame",
+    )
     screen_cv.add_argument("--preflight-once", action="store_true", help="capture, analyze, and save exactly one live screen frame")
     screen_cv.add_argument("--auto-bbox", action="store_true", help="find the poker window/table inside the capture region before analysis")
     screen_cv.add_argument("--auto-bbox-refresh", type=float, default=0.0, help="seconds between automatic bbox refreshes; 0 disables refresh")
@@ -2357,6 +2363,7 @@ def command_screen_cv(args: argparse.Namespace) -> int:
         lock_layout=args.lock_layout,
         hero_name=args.hero_name,
         show_overlay=args.show_overlay,
+        overlay_image_interval_sec=args.overlay_image_interval,
         pick_hero_cards=args.pick_hero_cards,
         hero_cards_file=args.hero_cards_file,
         review_auto_bbox=args.review_auto_bbox,

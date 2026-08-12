@@ -120,6 +120,7 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_live_over
 | `--dealer-refresh-frames 4` | 每 4 个采样帧刷新一次庄家 D 检测 | 当前建议保留 |
 | `--seats 8` | 牌桌座位数 | 六人桌请改为 `6` |
 | `--show-overlay` | 显示透明 CV 覆盖层 | 调试/实盘检查推荐 |
+| `--overlay-image-interval 2` | 覆盖层 PNG 截图写盘间隔，单位秒 | 透明覆盖层仍逐帧更新；默认每 2 秒更新一次 `latest_overlay*.png`，减少写盘延迟 |
 | `--save-frames` | 保存普通截屏帧 | 离线复盘时用，磁盘占用较大 |
 | `--save-annotated` | 保存带标注的截屏帧 | 离线复盘时用 |
 | `--no-problem-frames` | 不保存异常帧 | 不建议；默认会留证据 |
@@ -169,6 +170,7 @@ python -c "from rapidocr_onnxruntime import RapidOCR; print('OCR OK')"
     "timestamp_sec": 12.34,
     "frame_index": 12,
     "analysis_ms": 860.3,
+    "screen_timing_ms": {"action_controls_ocr_ms": 180.4, "overlay_window_ms": 14.2},
     "screen_region": {"left": 100, "top": 200, "width": 1200, "height": 820},
     "overlay_path": "video_frames\\screen_live\\latest_overlay.png"
   },
@@ -202,6 +204,7 @@ python -c "from rapidocr_onnxruntime import RapidOCR; print('OCR OK')"
 | --- | --- |
 | `ok` | 本帧是否成功形成状态；`false` 时不要把该帧当牌局事实使用 |
 | `source.analysis_ms` | 这一帧 CV 推理耗时（毫秒） |
+| `source.screen_timing_ms` | 屏幕抓取、底部操作区文字识别、覆盖层和写图的分项耗时；慢帧先看这里定位原因 |
 | `table.street` | `preflop`、`flop`、`turn`、`river` |
 | `table.pot_bb` | 识别到的底池，单位 BB |
 | `table.to_call_bb` | Hero 当前需补齐的金额，单位 BB |

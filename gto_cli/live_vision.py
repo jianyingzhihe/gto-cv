@@ -750,7 +750,9 @@ def roi_signature(frame: Any, rois: tuple[tuple[float, float, float, float], ...
 
 def event_source_timing_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
     sources = [event.get("source") or {} for event in events if event.get("ok")]
-    component_values: dict[str, list[float]] = {}
+    analysis_values: list[float] = []
+    cv_component_values: dict[str, list[float]] = {}
+    screen_component_values: dict[str, list[float]] = {}
     ocr_modes: dict[str, int] = {}
     cards_hint_used = 0
     card_cache_hit = 0
@@ -764,16 +766,22 @@ def event_source_timing_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
             card_cache_hit += 1
         analysis_ms = source.get("analysis_ms")
         if analysis_ms is not None:
-            component_values.setdefault("analysis_ms", []).append(float(analysis_ms))
+            analysis_values.append(float(analysis_ms))
         cv_timing = source.get("cv_timing_ms") or {}
         for key, value in cv_timing.items():
             if value is None:
                 continue
-            component_values.setdefault(str(key), []).append(float(value))
+            cv_component_values.setdefault(str(key), []).append(float(value))
+        screen_timing = source.get("screen_timing_ms") or {}
+        for key, value in screen_timing.items():
+            if value is None:
+                continue
+            screen_component_values.setdefault(str(key), []).append(float(value))
     return {
         "events": len(sources),
-        "analysis_ms": numeric_stats(component_values.pop("analysis_ms", [])),
-        "cv_timing_ms": {key: numeric_stats(values) for key, values in sorted(component_values.items())},
+        "analysis_ms": numeric_stats(analysis_values),
+        "cv_timing_ms": {key: numeric_stats(values) for key, values in sorted(cv_component_values.items())},
+        "screen_timing_ms": {key: numeric_stats(values) for key, values in sorted(screen_component_values.items())},
         "cards_hint_used": cards_hint_used,
         "card_cache_hit": card_cache_hit,
         "ocr_modes": ocr_modes,

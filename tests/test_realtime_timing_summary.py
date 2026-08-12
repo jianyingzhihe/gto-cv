@@ -16,6 +16,7 @@ class RealtimeTimingSummaryTest(unittest.TestCase):
                     "card_cache_hit": False,
                     "ocr_mode": "action_only_skipped",
                     "cv_timing_ms": {"cards_ms": 7.0, "ocr_ms": 0.0},
+                    "screen_timing_ms": {"action_controls_ocr_ms": 5.0},
                 },
             },
             {
@@ -26,6 +27,7 @@ class RealtimeTimingSummaryTest(unittest.TestCase):
                     "card_cache_hit": True,
                     "ocr_mode": "action_only_used",
                     "cv_timing_ms": {"cards_ms": 1.0, "ocr_ms": 3.0},
+                    "screen_timing_ms": {"action_controls_ocr_ms": 1.0},
                 },
             },
             {"ok": False, "source": {"analysis_ms": 999.0}},
@@ -39,6 +41,7 @@ class RealtimeTimingSummaryTest(unittest.TestCase):
         self.assertEqual(summary["ocr_modes"], {"action_only_skipped": 1, "action_only_used": 1})
         self.assertEqual(summary["analysis_ms"]["count"], 2)
         self.assertEqual(summary["cv_timing_ms"]["cards_ms"]["median"], 4.0)
+        self.assertEqual(summary["screen_timing_ms"]["action_controls_ocr_ms"]["median"], 3.0)
 
 
 if __name__ == "__main__":

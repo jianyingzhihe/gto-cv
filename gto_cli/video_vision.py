@@ -361,6 +361,28 @@ def run_ocr(frame: Any, ocr: Any | None, scale: float = 1.0) -> list[Any]:
     return result or []
 
 
+def run_ocr_in_roi(
+    frame: Any,
+    ocr: Any | None,
+    roi: tuple[float, float, float, float],
+    scale: float = 1.0,
+) -> list[Any]:
+    """Run OCR on a normalized subregion and return boxes in full-frame coordinates."""
+
+    if ocr is None:
+        return []
+    height, width = frame.shape[:2]
+    x1, y1, x2, y2 = scale_roi(roi, width, height)
+    x1 = max(0, min(width, x1))
+    y1 = max(0, min(height, y1))
+    x2 = max(x1, min(width, x2))
+    y2 = max(y1, min(height, y2))
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return []
+    return offset_ocr_result(run_ocr(crop, ocr, scale=scale), x1, y1)
+
+
 def scale_ocr_result(result: list[Any], factor: float) -> list[Any]:
     scaled = []
     for item in result:
@@ -370,6 +392,21 @@ def scale_ocr_result(result: list[Any], factor: float) -> list[Any]:
         scaled_box = [[float(point[0]) * factor, float(point[1]) * factor] for point in box]
         scaled.append((scaled_box, text, confidence))
     return scaled
+
+
+def offset_ocr_result(result: list[Any], offset_x: int, offset_y: int) -> list[Any]:
+    """Translate OCR boxes from a crop back into the original frame."""
+
+    shifted = []
+    for item in result:
+        if len(item) < 3:
+            continue
+        box, text, confidence = item[0], item[1], item[2]
+        shifted_box = [
+            [float(point[0]) + float(offset_x), float(point[1]) + float(offset_y)] for point in box
+        ]
+        shifted.append((shifted_box, text, confidence))
+    return shifted
 
 
 def detect_pot(frame: Any, ocr_result: list[Any]) -> dict[str, Any] | None:
