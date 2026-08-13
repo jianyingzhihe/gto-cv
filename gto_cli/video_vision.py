@@ -475,7 +475,9 @@ def detect_bets(frame: Any, seats: list[dict[str, Any]], ocr_result: list[Any], 
         text_seat_index, text_anchor_distance = nearest_bet_text_seat(text_box, frame.shape, len(seats))
         pot_amount = float(pot.get("amount_bb")) if pot and pot.get("amount_bb") is not None else None
         stack_sized = amount >= 20.0 if pot_amount is None else amount >= 20.0 and amount > max(20.0, pot_amount * 1.35)
-        if chip is None and stack_sized and is_player_stack_region(text_box, frame.shape):
+        # 玩家筹码余量与真实红筹码可能处在同一横向区域。只要大额数字
+        # 位于玩家面板，就不是桌面下注；小盲注仍需保留。
+        if stack_sized and is_player_stack_region(text_box, frame.shape):
             continue
         # 金额文字固定在各座位的下注区域；红色筹码会在动画中向内移动。
         # 因此筹码只能确认“这是下注”，不能覆盖金额文字已经给出的归属。
@@ -494,8 +496,6 @@ def detect_bets(frame: Any, seats: list[dict[str, Any]], ocr_result: list[Any], 
                 "anchor_distance": round(anchor_distance, 2),
                 "box": text_box,
             }
-            if amount >= 20.0 and anchor_distance > 24.0 and is_player_stack_region(text_box, frame.shape):
-                continue
         else:
             seat_index = nearest_bet_seat(chip, frame.shape, len(seats))
         current = bets.get(seat_index)

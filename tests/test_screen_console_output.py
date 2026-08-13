@@ -67,6 +67,16 @@ class ScreenConsoleOutputTest(unittest.TestCase):
         self.assertIn("WATCH | wait=hero_action_controls_not_visible", line)
         self.assertIn("hero=CO AhKd", line)
 
+    def test_turn_line_prefers_the_visible_call_button_amount(self) -> None:
+        state = make_state(ready=False, reason="preflop_scenario_not_supported")
+        state["hero_turn"] = {"is_turn": True, "reason": "red_buttons_and_action_text"}
+        state["action_controls"] = {"visible": True, "actions": ["fold", "call"], "call_amount_bb": 48.7}
+        state["table"]["to_call_bb"] = 0.0
+
+        line = format_screen_advice_line(state)
+
+        self.assertIn("call=48.7BB", line)
+
     def test_signature_ignores_bet_noise_but_tracks_advice_context(self) -> None:
         state = make_state(ready=False, reason="hero_action_controls_not_visible")
         original = screen_advice_console_signature(state)

@@ -2739,9 +2739,10 @@ def format_screen_advice_line(state: dict[str, Any]) -> str:
     cards = "".join(str(card) for card in (hero.get("cards") or [])) or "-"
     board = "".join(str(card) for card in (table.get("board") or [])) or "-"
     position = hero.get("gto_position") or hero.get("position") or "-"
+    call_amount = displayed_call_amount(state)
     context = (
         f"hero={position} {cards} | {table.get('street') or '-'} "
-        f"pot={format_bb(table.get('pot_bb'))} call={format_bb(table.get('to_call_bb'))} "
+        f"pot={format_bb(table.get('pot_bb'))} call={format_bb(call_amount)} "
         f"board={board}"
     )
     preflop_context = format_live_preflop_context(state, advice)
@@ -2800,6 +2801,18 @@ def format_seconds(value: Any) -> str:
         return f"{float(value):08.3f}s"
     except (TypeError, ValueError):
         return "--------s"
+
+
+def displayed_call_amount(state: dict[str, Any]) -> Any:
+    """Prefer the visible Hero call button over a stale table-level value."""
+
+    controls = state.get("action_controls") or {}
+    hero_turn = state.get("hero_turn") or {}
+    actions = {str(action).lower() for action in (controls.get("actions") or [])}
+    button_amount = controls.get("call_amount_bb")
+    if hero_turn.get("is_turn") and "call" in actions and button_amount is not None:
+        return button_amount
+    return (state.get("table") or {}).get("to_call_bb")
 
 
 def format_bb(value: Any) -> str:

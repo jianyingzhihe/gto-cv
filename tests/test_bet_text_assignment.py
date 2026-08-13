@@ -43,3 +43,24 @@ def test_chip_near_text_cannot_override_the_text_seat(monkeypatch) -> None:
     bets = video_vision.detect_bets(frame, seats, ocr)
 
     assert bets[3]["amount_bb"] == 0.4
+
+
+def test_stack_panel_amount_is_never_treated_as_a_bet_even_with_a_nearby_chip(monkeypatch) -> None:
+    monkeypatch.setattr(
+        video_vision,
+        "detect_red_chips",
+        lambda _frame: [{"x": 193.0, "y": 331.0, "area": 20.0, "circularity": 0.9}],
+    )
+    frame = np.zeros((1081, 1549, 3), dtype=np.uint8)
+    seats = [{"name": f"seat_{index}"} for index in range(8)]
+    ocr = [
+        (
+            [[195, 324], [332, 324], [332, 359], [195, 359]],
+            "52.7 BB",
+            0.81,
+        )
+    ]
+
+    bets = video_vision.detect_bets(frame, seats, ocr)
+
+    assert bets == {}

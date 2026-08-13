@@ -417,6 +417,103 @@ def test_tracker_records_hero_raise_then_later_three_bet() -> None:
     assert advice["scenario"] == "vs_3bet"
 
 
+def test_tracker_rejects_same_seat_call_then_raise_without_an_intervening_raise() -> None:
+    tracker = PreflopActionTracker()
+    first = state_for_hero_turn(hero_position="BTN", hero_order=6)
+    first["hero"].update({"position": "BTN", "gto_position": "BTN", "preflop_action_order": 6})
+    first["seats"] = [
+        seat("utg", "UTG", 1, "active_or_showdown", 2.0),
+        seat("utg1", "UTG+1", 2, "folded_or_empty", None),
+        seat("lj", "LJ", 3, "folded_or_empty", None),
+        seat("hj", "HJ", 4, "folded_or_empty", None),
+        seat("co", "CO", 5, "folded_or_empty", None),
+        seat("bottom_hero", "BTN", 6, "active_or_showdown", None),
+        seat("sb", "SB", 7, "active_or_showdown", 0.4),
+        seat("bb", "BB", 8, "active_or_showdown", 1.0),
+    ]
+    first["table"].update({"pot_bb": 3.4, "to_call_bb": 2.0, "dealer_seat": "bottom_hero"})
+    first["action_controls"] = {"visible": True, "actions": ["fold", "call", "raise"], "call_amount_bb": 2.0}
+    first["hero_turn"] = {"is_turn": True}
+    tracker.update(first)
+
+    after_hero_three_bet = deepcopy(first)
+    after_hero_three_bet["hero"]["bet_bb"] = 6.1
+    after_hero_three_bet["seats"][5]["bet_bb"] = 6.1
+    after_hero_three_bet["seats"][7]["bet_bb"] = 5.0
+    after_hero_three_bet["action_controls"] = {"visible": False}
+    after_hero_three_bet["hero_turn"] = {"is_turn": False}
+    tracker.update(after_hero_three_bet)
+    assert [event["action"] for event in after_hero_three_bet["preflop"]["action_history"]] == [
+        "raise",
+        "fold",
+        "fold",
+        "fold",
+        "fold",
+        "3bet",
+        "call",
+    ]
+
+    contradictory_raise = deepcopy(after_hero_three_bet)
+    contradictory_raise["seats"][7]["bet_bb"] = 52.7
+    contradictory_raise["action_controls"] = {"visible": True, "actions": ["fold", "call"], "call_amount_bb": 48.7}
+    contradictory_raise["hero_turn"] = {"is_turn": True}
+    tracker.update(contradictory_raise)
+
+    assert "preflop" not in contradictory_raise
+    assert contradictory_raise["preflop_tracker"]["reason"] == (
+        "contradictory_bet_transition:bb:call_to_4bet_without_intervening_raise"
+    )
+    advice = build_gto_advice(contradictory_raise)
+    assert not advice["ready"]
+    assert advice["reason"] == "preflop_context_incomplete"
+
+
+def test_tracker_reconstructs_all_in_four_bet_from_pot_change_and_call_button() -> None:
+    tracker = PreflopActionTracker()
+    first = state_for_hero_turn(hero_position="BTN", hero_order=6)
+    first["hero"].update({"position": "BTN", "gto_position": "BTN", "preflop_action_order": 6})
+    first["seats"] = [
+        seat("utg", "UTG", 1, "active_or_showdown", 2.0),
+        seat("utg1", "UTG+1", 2, "folded_or_empty", None),
+        seat("lj", "LJ", 3, "folded_or_empty", None),
+        seat("hj", "HJ", 4, "folded_or_empty", None),
+        seat("co", "CO", 5, "folded_or_empty", None),
+        seat("bottom_hero", "BTN", 6, "active_or_showdown", None),
+        seat("sb", "SB", 7, "folded_or_empty", 0.4),
+        seat("bb", "BB", 8, "folded_or_empty", 1.0),
+    ]
+    first["table"].update({"pot_bb": 3.4, "to_call_bb": 2.0, "dealer_seat": "bottom_hero"})
+    first["action_controls"] = {"visible": True, "actions": ["fold", "call", "raise"], "call_amount_bb": 2.0}
+    first["hero_turn"] = {"is_turn": True}
+    tracker.update(first)
+
+    after_hero_three_bet = deepcopy(first)
+    after_hero_three_bet["hero"]["bet_bb"] = 6.1
+    after_hero_three_bet["seats"][5]["bet_bb"] = 6.1
+    after_hero_three_bet["table"]["pot_bb"] = 9.5
+    after_hero_three_bet["action_controls"] = {"visible": False}
+    after_hero_three_bet["hero_turn"] = {"is_turn": False}
+    tracker.update(after_hero_three_bet)
+
+    facing_all_in = deepcopy(after_hero_three_bet)
+    facing_all_in["table"]["pot_bb"] = 62.2
+    facing_all_in["table"]["to_call_bb"] = 0.0
+    facing_all_in["seats"][0]["has_cards"] = True
+    facing_all_in["action_controls"] = {"visible": True, "actions": ["fold", "call"], "call_amount_bb": 48.7}
+    facing_all_in["hero_turn"] = {"is_turn": True}
+    tracker.update(facing_all_in)
+
+    history = facing_all_in["preflop"]["action_history"]
+    assert [(event.get("seat"), event["action"], event.get("amount_bb")) for event in history[-3:]] == [
+        ("bottom_hero", "3bet", 6.1),
+        ("utg", "4bet", 54.8),
+        (None, "hero_to_act", None),
+    ]
+    advice = build_gto_advice(facing_all_in)
+    assert not advice["ready"]
+    assert advice["reason"] == "preflop_scenario_not_supported"
+
+
 def test_tracker_keeps_confirmed_layout_when_a_weak_dealer_match_rotates_positions() -> None:
     tracker = PreflopActionTracker()
     first = {

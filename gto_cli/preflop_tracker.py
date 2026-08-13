@@ -33,6 +33,8 @@ class PreflopActionTracker:
         self._history: list[dict[str, Any]] | None = None
         self._previous_bets: dict[str, float] = {}
         self._previous_statuses: dict[str, str] = {}
+        self._previous_pot_bb: float | None = None
+        self._pending_contradictory_transition = False
         self._folded_seats: set[str] = set()
         self._previous_street: str | None = None
         self._sequence = 0
@@ -80,7 +82,7 @@ class PreflopActionTracker:
         else:
             self._record_transitions(state)
 
-        if self._history is not None:
+        if self._history is not None and not self._pending_contradictory_transition:
             visible_history = deepcopy(self._history)
             hero_turn_value = state.get("hero_turn")
             is_hero_turn = (
@@ -104,6 +106,7 @@ class PreflopActionTracker:
                 "history_confidence": "conservative",
             }
         else:
+            state.pop("preflop", None)
             state["preflop_tracker"] = {
                 "status": "unconfirmed",
                 "reason": self._sync_reason,
@@ -118,6 +121,8 @@ class PreflopActionTracker:
         self._history = None
         self._previous_bets = {}
         self._previous_statuses = {}
+        self._previous_pot_bb = None
+        self._pending_contradictory_transition = False
         self._folded_seats = set()
         self._sequence = 0
         self._sync_reason = "new_hand_waiting_for_first_hero_decision"
@@ -151,6 +156,7 @@ class PreflopActionTracker:
     def _remember_observation(self, state: dict[str, Any]) -> None:
         self._previous_bets = seat_bets(state)
         self._previous_statuses = seat_statuses(state)
+        self._previous_pot_bb = number_or_none(as_dict(state.get("table")).get("pot_bb"))
 
     def _record_transitions(self, state: dict[str, Any]) -> None:
         if self._history is None or not self._previous_bets:
@@ -159,6 +165,8 @@ class PreflopActionTracker:
         seats = ordered_seats(state)
         current_bets = seat_bets(state)
         current_statuses = seat_statuses(state)
+        if self._record_all_in_raise_from_pot_change(state, seats):
+            return
         raise_to = largest_raise_to(self._history)
         raise_count = raise_events(self._history)
         changed: list[tuple[int, dict[str, Any], float, float]] = []
@@ -181,6 +189,8 @@ class PreflopActionTracker:
                 action = raise_action_name(raise_count)
                 raise_to = new
                 raise_count += 1
+            if self._repeated_action_without_intervening_raise(seat, action):
+                return
             self._append(seat, action, new)
 
         for seat in seats:
@@ -194,6 +204,93 @@ class PreflopActionTracker:
             ):
                 self._append(seat, "fold", None)
                 self._folded_seats.add(seat_name)
+
+    def _record_all_in_raise_from_pot_change(self, state: dict[str, Any], seats: list[dict[str, Any]]) -> bool:
+        """用底池跳变和 Hero 跟注按钮确认一次全下加注。"""
+
+        controls = as_dict(state.get("action_controls"))
+        hero_turn = as_dict(state.get("hero_turn"))
+        actions = {str(action).lower() for action in list(controls.get("actions") or [])}
+        call_amount = number_or_none(controls.get("call_amount_bb"))
+        hero = as_dict(state.get("hero"))
+        hero_bet = number_or_none(hero.get("bet_bb")) or 0.0
+        current_pot = number_or_none(as_dict(state.get("table")).get("pot_bb"))
+        if (
+            not hero_turn.get("is_turn")
+            or not {"fold", "call"}.issubset(actions)
+            or call_amount is None
+            or call_amount <= EPSILON_BB
+            or hero_bet <= EPSILON_BB
+            or self._previous_pot_bb is None
+            or current_pot is None
+        ):
+            return False
+
+        prior_raise_to = largest_raise_to(self._history or [])
+        raise_to = hero_bet + call_amount
+        if raise_to <= prior_raise_to + EPSILON_BB:
+            return False
+
+        # 只接受仍持牌的、此前已参与加注的对手；这样不会把普通底池
+        # 变化猜成全下。
+        active_seats = {
+            str(seat.get("seat") or "")
+            for seat in seats
+            if seat.get("has_cards") and str(seat.get("seat") or "") != str(hero.get("seat") or "")
+        }
+        prior_raiser = next(
+            (
+                event
+                for event in reversed(self._history or [])
+                if event.get("action") in raise_actions() and str(event.get("seat") or "") in active_seats
+            ),
+            None,
+        )
+        if prior_raiser is None:
+            return False
+        prior_seat = str(prior_raiser.get("seat") or "")
+        prior_contribution = self._previous_bets.get(prior_seat, 0.0)
+        added_amount = raise_to - prior_contribution
+        pot_increase = current_pot - self._previous_pot_bb
+        if added_amount <= EPSILON_BB or abs(pot_increase - added_amount) > 0.35:
+            return False
+
+        seat = next((item for item in seats if str(item.get("seat") or "") == prior_seat), None)
+        if seat is None:
+            return False
+        self._append(seat, raise_action_name(raise_events(self._history or [])), raise_to)
+        self._pending_contradictory_transition = False
+        return True
+
+    def _repeated_action_without_intervening_raise(self, seat: dict[str, Any], action: str) -> bool:
+        """拒绝同一座位无中间加注的“跟注后又加注”矛盾序列。"""
+
+        if self._history is None or action not in raise_actions():
+            return False
+        seat_name = str(seat.get("seat") or "")
+        if not seat_name:
+            return False
+        prior_index = next(
+            (
+                index
+                for index in range(len(self._history) - 1, -1, -1)
+                if str(self._history[index].get("seat") or "") == seat_name
+            ),
+            None,
+        )
+        if prior_index is None or self._history[prior_index].get("action") != "call":
+            return False
+        intervening_raise = any(
+            str(event.get("seat") or "") != seat_name and event.get("action") in raise_actions()
+            for event in self._history[prior_index + 1 :]
+        )
+        if intervening_raise:
+            return False
+        self._history.pop(prior_index)
+        self._sequence = len(self._history)
+        self._sync_reason = f"contradictory_bet_transition:{seat_name}:call_to_{action}_without_intervening_raise"
+        self._pending_contradictory_transition = True
+        return True
 
     def _append(self, seat: dict[str, Any], action: str, amount_bb: float | None) -> None:
         if self._history is None:
