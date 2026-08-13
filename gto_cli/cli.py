@@ -1608,7 +1608,7 @@ def build_parser() -> argparse.ArgumentParser:
     cv_health.add_argument("--villain", default="standard", help="villain profile for generated --with-advice live command")
     cv_health.add_argument("--min-confidence", type=float, default=0.35)
     cv_health.add_argument("--ocr-scale", type=float, default=0.65)
-    cv_health.add_argument("--dealer-refresh-frames", type=int, default=4)
+    cv_health.add_argument("--dealer-refresh-frames", type=int, default=12)
     cv_health.add_argument("--auto-bbox-refresh", type=float, default=10.0)
     cv_health.add_argument("--max-real-problem", type=int, default=0)
     cv_health.add_argument("--max-board-bad", type=int, default=0)

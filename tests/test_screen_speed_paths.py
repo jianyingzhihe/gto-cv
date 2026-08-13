@@ -11,6 +11,12 @@ from gto_cli import video_vision
 from gto_cli.video_vision import run_ocr_in_roi
 
 
+def test_screen_vision_imports_the_shared_timing_helper() -> None:
+    from gto_cli import screen_vision
+
+    assert screen_vision.elapsed_ms(0.0) >= 0.0
+
+
 def test_action_ocr_crop_preserves_full_window_coordinates() -> None:
     received_shapes: list[tuple[int, ...]] = []
 

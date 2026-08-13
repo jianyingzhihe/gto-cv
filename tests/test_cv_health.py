@@ -202,6 +202,7 @@ class CvHealthTest(unittest.TestCase):
             bbox=bbox,
             output_dir=Path("video_frames") / "cv_health_promoted",
             hero_name="hero",
+            dealer_refresh_frames=12,
         )
         live = build_live_command(
             bbox=bbox,
@@ -220,7 +221,8 @@ class CvHealthTest(unittest.TestCase):
             self.assertIn('--hero-name "hero"', command)
             self.assertIn('--villain "standard"', command)
             self.assertIn("--ocr-scale 0.65", command)
-            self.assertIn("--dealer-refresh-frames 4", command)
+        self.assertIn("--dealer-refresh-frames 12", health)
+        self.assertIn("--dealer-refresh-frames 4", live)
         self.assertNotIn("--deep-card-model-dir", health)
         self.assertIn('--deep-card-model-dir "pict\\card_models\\deep_realtime_v2_temporal"', live)
         self.assertNotIn("--ocr-action-only", live)
