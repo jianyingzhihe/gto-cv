@@ -545,7 +545,7 @@ def build_parser() -> argparse.ArgumentParser:
     screen_cv.add_argument(
         "--dealer-refresh-frames",
         type=int,
-        default=4,
+        default=12,
         help="refresh dealer detection every N processed frames; cached dealer is used between refreshes",
     )
     screen_cv.add_argument(

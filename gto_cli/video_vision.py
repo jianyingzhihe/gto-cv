@@ -253,6 +253,8 @@ def analyze_video_frame(
     seat_count: int = 8,
     min_confidence: float = 0.45,
     ocr: Any | None = None,
+    ocr_result_hint: list[Any] | None = None,
+    return_ocr_result: bool = False,
     dealer_button_hint: dict[str, Any] | None = None,
     cards_hint: dict[str, Any] | None = None,
     ocr_scale: float = 1.0,
@@ -276,8 +278,15 @@ def analyze_video_frame(
     positions = POSITION_ORDER_BY_SEATS[seat_count]
     timing["seats_ms"] = elapsed_ms(step_started)
     step_started = time.perf_counter()
-    ocr_result = run_ocr(frame, ocr, scale=ocr_scale)
-    timing["ocr_ms"] = elapsed_ms(step_started)
+    if ocr_result_hint is None:
+        ocr_result = run_ocr(frame, ocr, scale=ocr_scale)
+        timing["ocr_ms"] = elapsed_ms(step_started)
+    else:
+        # 调用方只有在确认牌桌像素未变化后才能复用光学字符识别（OCR）结果；
+        # 底池和下注仍经过同一套坐标解析，避免改变识别语义。
+        ocr_result = ocr_result_hint
+        timing["ocr_ms"] = 0.0
+        timing["ocr_cached"] = 1.0
     step_started = time.perf_counter()
     pot = detect_pot(frame, ocr_result)
     bets = detect_bets(frame, seats, ocr_result=ocr_result, pot=pot)
@@ -309,7 +318,7 @@ def analyze_video_frame(
 
     hero = seats[0]
     dealer = seats[dealer_index]
-    return {
+    result = {
         "dealer_button": button,
         "dealer": {
             "seat_index": dealer_index,
@@ -338,6 +347,9 @@ def analyze_video_frame(
         "ocr_item_count": len(ocr_result),
         "cards_hint_used": cards_hint is not None,
     }
+    if return_ocr_result:
+        result["_ocr_result"] = ocr_result
+    return result
 
 
 def elapsed_ms(started_at: float) -> float:

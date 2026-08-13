@@ -69,6 +69,10 @@ AUTO_BBOX_SCORE_MAX_WIDTH = 1280
 # The controls live in the lower-right part of the manually selected full
 # client. OCR uses this crop, then restores box coordinates to the full client.
 ACTION_OCR_ROI = (0.40, 0.82, 1.0, 1.0)
+# 相邻两张牌桌图像几乎一致时，只复用一次光学字符识别（OCR）结果；
+# 下一帧必定重读，防止缩小后的画面比较遗漏细小变化。
+STABLE_OCR_MAX_VISUAL_DIFF = 0.12
+STABLE_OCR_MAX_REUSE_FRAMES = 1
 
 
 def active_python_gto_command() -> str:
@@ -110,7 +114,7 @@ def analyze_screen_stream(
     print_events: bool = False,
     auto_bbox: bool = False,
     auto_bbox_refresh_sec: float = 0.0,
-    dealer_refresh_frames: int = 4,
+    dealer_refresh_frames: int = 12,
     ocr_scale: float = 1.0,
     ocr_action_only: bool = False,
     lock_layout: bool = False,
@@ -208,6 +212,9 @@ def analyze_screen_stream(
     card_roi_cache: dict[str, Any] | None = None
     card_cache_hits = 0
     card_cache_misses = 0
+    table_ocr_cache: list[Any] | None = None
+    table_ocr_reuse_streak = 0
+    table_ocr_cache_uses = 0
     hero_card_cache: dict[str, Any] | None = None
     preflop_tracker = PreflopActionTracker()
     last_console_signature: str | None = None
@@ -608,6 +615,8 @@ def analyze_screen_stream(
                                 last_normal_action_buttons_visible = False
                                 card_roi_cache_signature = None
                                 card_roi_cache = None
+                                table_ocr_cache = None
+                                table_ocr_reuse_streak = 0
                                 previous_visual = None
                                 previous_signature = None
                                 if print_events:
@@ -671,6 +680,7 @@ def analyze_screen_stream(
                         active_layout_profile = layout_profile if layout_locked else None
                         frame_ocr = ocr
                         ocr_mode = "full" if ocr is not None else "disabled"
+                        ocr_result_hint = None
                         # 先只看红色操作面板。若已经出现正常操作按钮，庄家
                         # 位置绝不能继续沿用上一手的缓存，否则盲注和翻前顺序
                         # 会整体错位。
@@ -683,6 +693,35 @@ def analyze_screen_stream(
                             else:
                                 frame_ocr = None
                                 ocr_mode = "action_only_skipped"
+                        elif should_reuse_stable_ocr(
+                            cached_ocr=table_ocr_cache,
+                            reuse_streak=table_ocr_reuse_streak,
+                            visual_diff=visual_diff,
+                            normal_action_buttons_visible=normal_action_buttons_visible,
+                            previous_normal_action_buttons_visible=last_normal_action_buttons_visible,
+                        ):
+                            frame_ocr = None
+                            ocr_result_hint = table_ocr_cache
+                            table_ocr_reuse_streak += 1
+                            table_ocr_cache_uses += 1
+                            ocr_mode = "stable_frame_cache"
+                        else:
+                            table_ocr_reuse_streak = 0
+                        cards_hint = None
+                        card_regions_changed = False
+                        if trigger == "frame":
+                            signature_rois = card_signature_rois(layout_profile)
+                            card_signature = roi_signature(frame, signature_rois)
+                            card_regions_changed = (
+                                card_roi_cache_signature is not None
+                                and card_signature != card_roi_cache_signature
+                            )
+                            if card_signature == card_roi_cache_signature:
+                                cards_hint = card_roi_cache
+                                card_cache_hits += 1
+                            else:
+                                card_roi_cache_signature = card_signature
+                                card_cache_misses += 1
                         used_dealer_cache = False
                         refresh_dealer = should_refresh_dealer_button(
                             dealer_button_cache=dealer_button_cache,
@@ -693,18 +732,9 @@ def analyze_screen_stream(
                             visual_threshold=visual_threshold,
                             normal_action_buttons_visible=normal_action_buttons_visible,
                             previous_normal_action_buttons_visible=last_normal_action_buttons_visible,
+                            card_regions_changed=card_regions_changed,
                         )
                         last_normal_action_buttons_visible = normal_action_buttons_visible
-                        cards_hint = None
-                        if trigger == "frame":
-                            signature_rois = card_signature_rois(layout_profile)
-                            card_signature = roi_signature(frame, signature_rois)
-                            if card_signature == card_roi_cache_signature:
-                                cards_hint = card_roi_cache
-                                card_cache_hits += 1
-                            else:
-                                card_roi_cache_signature = card_signature
-                                card_cache_misses += 1
                         try:
                             frame_result = analyze_video_frame(
                                 frame,
@@ -712,6 +742,8 @@ def analyze_screen_stream(
                                 seat_count=seat_count,
                                 min_confidence=min_confidence,
                                 ocr=frame_ocr,
+                                ocr_result_hint=ocr_result_hint,
+                                return_ocr_result=True,
                                 dealer_button_hint=None if refresh_dealer else dealer_button_cache,
                                 cards_hint=cards_hint,
                                 ocr_scale=ocr_scale,
@@ -732,6 +764,8 @@ def analyze_screen_stream(
                                 seat_count=seat_count,
                                 min_confidence=min_confidence,
                                 ocr=frame_ocr,
+                                ocr_result_hint=ocr_result_hint,
+                                return_ocr_result=True,
                                 dealer_button_hint=dealer_button_cache,
                                 cards_hint=cards_hint,
                                 ocr_scale=ocr_scale,
@@ -743,6 +777,9 @@ def analyze_screen_stream(
                             dealer_cache_uses += 1
                         if trigger == "frame" and cards_hint is None:
                             card_roi_cache = frame_result.get("cards")
+                        fresh_ocr_result = frame_result.pop("_ocr_result", None)
+                        if frame_ocr is not None and fresh_ocr_result is not None:
+                            table_ocr_cache = fresh_ocr_result
                         # The first manually selected region is the complete poker client.
                         # Auto bbox may refine only the inner table, never the action-control input.
                         action_ocr = []
@@ -778,6 +815,7 @@ def analyze_screen_stream(
                         state["source"]["visual_diff"] = round(float(visual_diff), 4)
                         state["source"]["table_visibility"] = table_visibility
                         state["source"]["ocr_mode"] = ocr_mode
+                        state["source"]["ocr_reused"] = ocr_result_hint is not None
                         state["source"]["action_controls_ocr_mode"] = action_controls_ocr_mode
                         state["source"]["cv_timing_ms"] = frame_result.get("timing_ms") or {}
                         state["source"]["ocr_item_count"] = frame_result.get("ocr_item_count")
@@ -1069,6 +1107,7 @@ def analyze_screen_stream(
         "advice_enabled": with_advice,
         "dealer_refresh_frames": dealer_refresh_frames,
         "dealer_cache_uses": dealer_cache_uses,
+        "table_ocr_cache_uses": table_ocr_cache_uses,
         "saved_problem_frames": saved_problem_frames,
         "saved_card_debug_samples": saved_card_debug_samples,
         "record_card_samples": record_live_card_samples,
@@ -1156,8 +1195,9 @@ def should_refresh_dealer_button(
     visual_threshold: float,
     normal_action_buttons_visible: bool,
     previous_normal_action_buttons_visible: bool,
+    card_regions_changed: bool = False,
 ) -> bool:
-    """Refresh when controls first appear, layout changes, or scheduled validation is due."""
+    """Refresh when a new hand, controls, layout, or scheduled validation requires it."""
 
     return bool(
         dealer_button_cache is None
@@ -1165,6 +1205,26 @@ def should_refresh_dealer_button(
         or processed_frames - last_dealer_refresh_frame >= max(1, int(dealer_refresh_frames))
         or visual_diff >= max(8.0, visual_threshold * 3.0)
         or (normal_action_buttons_visible and not previous_normal_action_buttons_visible)
+        or card_regions_changed
+    )
+
+
+def should_reuse_stable_ocr(
+    *,
+    cached_ocr: list[Any] | None,
+    reuse_streak: int,
+    visual_diff: float,
+    normal_action_buttons_visible: bool,
+    previous_normal_action_buttons_visible: bool,
+) -> bool:
+    """Reuse one OCR result only for a visually unchanged, stable client frame."""
+
+    return bool(
+        cached_ocr
+        and reuse_streak < STABLE_OCR_MAX_REUSE_FRAMES
+        and visual_diff <= STABLE_OCR_MAX_VISUAL_DIFF
+        and not normal_action_buttons_visible
+        and normal_action_buttons_visible == previous_normal_action_buttons_visible
     )
 
 

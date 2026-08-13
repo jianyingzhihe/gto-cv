@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from gto_cli.screen_vision import should_refresh_dealer_button, should_write_overlay_snapshot
+from gto_cli.screen_vision import (
+    should_refresh_dealer_button,
+    should_reuse_stable_ocr,
+    should_write_overlay_snapshot,
+)
 from gto_cli import video_vision
 from gto_cli.video_vision import run_ocr_in_roi
 
@@ -53,6 +57,76 @@ def test_dealer_refreshes_when_normal_action_panel_first_appears_not_every_frame
 
     assert should_refresh_dealer_button(**common, previous_normal_action_buttons_visible=False)
     assert not should_refresh_dealer_button(**common, previous_normal_action_buttons_visible=True)
+
+
+def test_dealer_refreshes_when_hero_or_board_cards_change() -> None:
+    common = {
+        "dealer_button_cache": {"center": {"x": 1, "y": 1}},
+        "dealer_refresh_frames": 12,
+        "processed_frames": 2,
+        "last_dealer_refresh_frame": 1,
+        "visual_diff": 0.0,
+        "visual_threshold": 2.4,
+        "normal_action_buttons_visible": False,
+        "previous_normal_action_buttons_visible": False,
+    }
+
+    assert should_refresh_dealer_button(**common, card_regions_changed=True)
+    assert not should_refresh_dealer_button(**common, card_regions_changed=False)
+
+
+def test_stable_ocr_cache_is_single_use_and_requires_an_unchanged_frame() -> None:
+    common = {
+        "cached_ocr": [([[0, 0], [1, 0], [1, 1], [0, 1]], "2BB", 0.9)],
+        "normal_action_buttons_visible": False,
+        "previous_normal_action_buttons_visible": False,
+    }
+
+    assert should_reuse_stable_ocr(**common, reuse_streak=0, visual_diff=0.04)
+    assert not should_reuse_stable_ocr(**common, reuse_streak=1, visual_diff=0.04)
+    assert not should_reuse_stable_ocr(**common, reuse_streak=0, visual_diff=0.13)
+    changed_controls = {
+        **common,
+        "normal_action_buttons_visible": False,
+        "previous_normal_action_buttons_visible": True,
+    }
+    assert not should_reuse_stable_ocr(
+        **changed_controls,
+        reuse_streak=0,
+        visual_diff=0.04,
+    )
+
+
+def test_stable_ocr_cache_is_disabled_when_hero_action_buttons_are_visible() -> None:
+    assert not should_reuse_stable_ocr(
+        cached_ocr=[([[0, 0], [1, 0], [1, 1], [0, 1]], "2BB", 0.9)],
+        reuse_streak=0,
+        visual_diff=0.0,
+        normal_action_buttons_visible=True,
+        previous_normal_action_buttons_visible=True,
+    )
+
+
+def test_video_analysis_uses_supplied_ocr_without_calling_the_ocr_engine(monkeypatch) -> None:
+    monkeypatch.setattr(video_vision, "find_dealer_button", lambda *_args, **_kwargs: {"center": {"x": 50, "y": 50}})
+    monkeypatch.setattr(video_vision, "detect_pot", lambda *_args, **_kwargs: {"amount_bb": None})
+    monkeypatch.setattr(video_vision, "detect_bets", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(video_vision, "detect_action_controls", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(video_vision, "detect_visible_cards", lambda *_args, **_kwargs: {"hero": [], "board": []})
+    monkeypatch.setattr(video_vision, "detect_card_statuses", lambda *_args, **_kwargs: {})
+
+    def should_not_run(_frame):
+        raise AssertionError("OCR engine should not run when a cached OCR result is supplied")
+
+    result = video_vision.analyze_video_frame(
+        np.zeros((100, 100, 3), dtype=np.uint8),
+        template=None,
+        ocr=should_not_run,
+        ocr_result_hint=[],
+    )
+
+    assert result["timing_ms"]["ocr_ms"] == 0.0
+    assert result["timing_ms"]["ocr_cached"] == 1.0
 
 
 def test_overlay_png_snapshot_is_rate_limited_without_delaying_live_overlay() -> None:
