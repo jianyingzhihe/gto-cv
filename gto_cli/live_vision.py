@@ -917,7 +917,8 @@ def build_hero_turn(action_controls: dict[str, Any]) -> dict[str, Any]:
     # The client can expose a pre-action quick-fold button before it is
     # actually Hero's turn.  A fold-only surface is therefore not enough to
     # request normal GTO advice.
-    normal_actions = {"call", "raise", "check", "bet"}
+    # \"\u5168\u4e0b\"\uff08all-in\uff09\u53ea\u4f1a\u5728\u771f\u6b63\u8f6e\u5230 Hero \u65f6\u53ef\u70b9\uff0c\n+    # \u4e0e\u8f6e\u5230\u524d\u7684\u5feb\u901f\u5f03\u724c\u4e0d\u540c\u3002\u540e\u7eed\u7531\u5efa\u8bae\u5c42\u660e\u786e\u62e6\u4e0b\u8fd9\u7c7b\n+    # \u7279\u6b8a\u51b3\u7b56\uff0c\u4e0d\u4ea7\u751f\u666e\u901a\u7684\u8ddf\u6ce8\u6216\u4e0b\u6ce8\u5efa\u8bae\u3002
+    normal_actions = {"call", "raise", "check", "bet", "all_in"}
     if not normal_actions.intersection(actions):
         return {
             "is_turn": False,

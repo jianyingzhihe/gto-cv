@@ -60,6 +60,18 @@ def test_fast_fold_only_does_not_request_normal_gto_advice() -> None:
     assert advice["hero_turn_reason"] == "fast_fold_only"
 
 
+def test_all_in_choice_is_recognized_but_not_sent_to_normal_gto_advice() -> None:
+    state = postflop_state(pot_bb=147.0)
+    state["hero_turn"] = {"is_turn": True, "reason": "red_buttons_and_action_text"}
+    state["action_controls"] = {"visible": True, "actions": ["fold", "all_in"]}
+
+    advice = build_gto_advice(state)
+
+    assert not advice["ready"]
+    assert advice["should_act"] is False
+    assert advice["reason"] == "all_in_action_not_supported"
+
+
 def test_displayed_sizing_uses_pot_percentages_not_bb_amounts() -> None:
     size_mix = build_size_mix(
         decision={"mix": {"raise": 100.0}},

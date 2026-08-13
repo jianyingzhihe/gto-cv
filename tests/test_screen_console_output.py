@@ -77,6 +77,15 @@ class ScreenConsoleOutputTest(unittest.TestCase):
 
         self.assertIn("call=48.7BB", line)
 
+    def test_all_in_turn_is_not_reported_as_fast_fold(self) -> None:
+        state = make_state(ready=False, reason="all_in_action_not_supported")
+        state["hero_turn"] = {"is_turn": True, "reason": "red_buttons_and_action_text"}
+        state["action_controls"] = {"visible": True, "actions": ["fold", "all_in"]}
+
+        line = format_screen_advice_line(state)
+
+        self.assertIn("TURN | wait=all_in_action_not_supported", line)
+
     def test_signature_ignores_bet_noise_but_tracks_advice_context(self) -> None:
         state = make_state(ready=False, reason="hero_action_controls_not_visible")
         original = screen_advice_console_signature(state)

@@ -40,6 +40,14 @@ def build_gto_advice(
             actions=list(action_controls.get("actions") or []),
         )
 
+    actions = {str(action).lower() for action in list(action_controls.get("actions") or [])}
+    if "all_in" in actions:
+        return not_ready(
+            "all_in_action_not_supported",
+            actions=sorted(actions),
+            summary="WAIT: Hero can act, but the visible choice includes all-in; this strategy model does not advise all-in decisions.",
+        )
+
     hero = state.get("hero") or {}
     table = state.get("table") or {}
     cards = list(hero.get("cards") or [])

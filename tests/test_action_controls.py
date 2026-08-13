@@ -60,6 +60,23 @@ def test_fold_only_surface_is_fast_fold_not_a_confirmed_hero_turn() -> None:
     assert hero_turn["reason"] == "fast_fold_only"
 
 
+def test_fold_and_all_in_surface_confirms_a_special_hero_turn() -> None:
+    hero_turn = build_hero_turn(
+        {
+            "visible": True,
+            "actions": ["fold", "all_in"],
+            "red_button_regions": [
+                {"x": 500, "y": 500, "width": 100, "height": 40},
+                {"x": 610, "y": 500, "width": 100, "height": 40},
+            ],
+        }
+    )
+
+    assert hero_turn["is_turn"]
+    assert hero_turn["reason"] == "red_buttons_and_action_text"
+    assert hero_turn["actions"] == ["fold", "all_in"]
+
+
 def test_gray_call_label_next_to_red_quick_fold_is_not_a_hero_turn(monkeypatch) -> None:
     monkeypatch.setattr(
         video_vision,

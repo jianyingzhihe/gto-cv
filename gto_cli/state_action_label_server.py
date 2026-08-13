@@ -430,6 +430,7 @@ def plain_advice_reason(reason: Any) -> str:
         "hero_action_controls_visible": "证据充分，已生成建议",
         "hero_action_controls_not_visible": "当前未看到可用的 Hero 操作按钮，可能未轮到 Hero 或操作区不可见",
         "hero_turn_not_confirmed": "尚未确认轮到 Hero，不能输出操作建议",
+        "all_in_action_not_supported": "已确认轮到 Hero，但当前可选操作包含全下；普通策略模型不会为全下决策生成建议",
         "preflop_context_incomplete": "翻前早期行动没有被完整、可信地记录，不能把单个下注数字直接猜成加注",
         "preflop_scenario_not_supported": "翻前行动顺序已经识别，但当前策略只覆盖开局、面对开局和面对三次下注，尚未覆盖这一类局面",
         "board_cards_incomplete": "公共牌仍在发牌动画或尚未完整识别，等待牌面稳定后再计算建议",

@@ -609,6 +609,8 @@ def action_label_from_text(text: str) -> str | None:
     compact = text.replace(" ", "")
     if "\u5f03\u724c" in compact:
         return "fold"
+    if "\u5168\u4e0b" in compact or "allin" in compact.lower() or "all-in" in compact.lower():
+        return "all_in"
     if "\u8ddf\u6ce8" in compact:
         return "call"
     if "\u52a0\u6ce8" in compact:
