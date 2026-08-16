@@ -126,6 +126,35 @@ def build_gto_advice(
                 else "WAIT: preflop action history is required before GTO can classify RFI/vs-open/vs-3bet."
             ),
         )
+    visible_primary = strategy_action_to_visible_action(primary)
+    if visible_primary not in actions:
+        return not_ready(
+            "advice_action_not_available",
+            action=primary,
+            required_visible_action=visible_primary,
+            actions=sorted(actions),
+            input=advisor_state,
+            result=result,
+            summary="WAIT: the strategy action is not available in the visible Hero controls.",
+        )
+    unavailable_mix = sorted(
+        {
+            strategy_action_to_visible_action(action)
+            for action, frequency in (decision.get("mix") or {}).items()
+            if as_float(frequency, 0.0) > 0
+            and strategy_action_to_visible_action(action) not in actions
+        }
+    )
+    if unavailable_mix:
+        return not_ready(
+            "advice_action_space_mismatch",
+            action=primary,
+            unavailable_actions=unavailable_mix,
+            actions=sorted(actions),
+            input=advisor_state,
+            result=result,
+            summary="WAIT: the strategy action space does not match the visible Hero controls.",
+        )
     amount = recommended_amount_bb(primary, decision, to_call_bb)
     size_mix = build_size_mix(
         decision=decision,
@@ -176,6 +205,9 @@ def action_to_call(
 ) -> tuple[float, str]:
     """Choose a plausible call amount without allowing stack OCR to leak in."""
 
+    actions = {str(action).lower() for action in action_controls.get("actions") or []}
+    if "check" in actions and "call" not in actions:
+        return 0.0, "visible_check_without_call"
     table_call = as_float(table.get("to_call_bb"), 0.0)
     call_amount = as_float(action_controls.get("call_amount_bb"), None)
     if call_amount is None:
@@ -185,6 +217,17 @@ def action_to_call(
     if table_call > 0 and call_amount > max(table_call * 4.0, table_call + 8.0):
         return table_call, "table_bets_rejected_control_mismatch"
     return call_amount, "action_controls"
+
+
+def strategy_action_to_visible_action(action: Any) -> str:
+    """Map strategy labels to the corresponding client button label."""
+
+    normalized = str(action or "").lower()
+    if normalized in {"open", "raise", "3bet", "4bet"}:
+        return "raise"
+    if normalized == "limp":
+        return "call"
+    return normalized
 
 
 def attach_explicit_preflop_context(source_state: dict[str, Any], advisor_state: dict[str, Any]) -> None:

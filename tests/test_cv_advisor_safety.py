@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from gto_cli import cv_advisor
 from gto_cli.cv_advisor import action_to_call, build_gto_advice, build_size_mix, format_advice_summary
 
 
@@ -85,3 +86,40 @@ def test_displayed_sizing_uses_pot_percentages_not_bb_amounts() -> None:
     assert "% POT" in summary
     assert "BB" not in summary
     assert "BB" not in size_mix["summary"]
+
+
+def test_check_without_call_forces_zero_to_call() -> None:
+    amount, source = action_to_call(
+        {"actions": ["check", "bet"], "call_amount_bb": None},
+        {"to_call_bb": 171.4},
+        effective_stack_bb=100,
+    )
+
+    assert amount == 0.0
+    assert source == "visible_check_without_call"
+
+
+def test_advice_waits_when_primary_action_is_not_a_visible_button(monkeypatch) -> None:
+    state = postflop_state(pot_bb=13.6)
+    state["action_controls"] = {"visible": True, "actions": ["check", "bet"]}
+    state["table"]["to_call_bb"] = 171.4
+    monkeypatch.setattr(
+        cv_advisor,
+        "advise_state",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "mode": "postflop",
+            "decision": {
+                "primary_action": "fold",
+                "mix": {"fold": 100.0},
+                "recommended_size_bb": None,
+                "confidence": "high",
+            },
+        },
+    )
+
+    advice = build_gto_advice(state, effective_stack_bb=100)
+
+    assert not advice["ready"]
+    assert advice["reason"] == "advice_action_not_available"
+    assert advice["actions"] == ["bet", "check"]

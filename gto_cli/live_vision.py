@@ -327,6 +327,9 @@ def build_realtime_state(
     to_call = max(0.0, round(max_bet - hero_bet, 2))
     card_confidence = build_card_confidence(cards)
     action_controls = frame_result.get("action_controls") or {}
+    visible_actions = {str(action).lower() for action in action_controls.get("actions") or []}
+    if "check" in visible_actions and "call" not in visible_actions:
+        to_call = 0.0
     hero_turn = build_hero_turn(action_controls)
     # "过牌/下注"是翻后无人下注时的常规面板。若公共牌仍在发牌动画，
     # 不能把暂时空白的公共牌区域当成翻前并要求补齐翻前行动历史。

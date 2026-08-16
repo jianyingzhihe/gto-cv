@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
-from gto_cli.live_vision import stabilize_hero_cards
+from gto_cli.live_vision import build_realtime_state, stabilize_hero_cards
 
 
 def make_state(
@@ -187,6 +188,39 @@ class LiveVisionCardStabilizationTest(unittest.TestCase):
         self.assertEqual(next_hand["hero"]["cards"], ["5c", "2h"])
         self.assertEqual(cache["cards"], ["5c", "2h"])
         self.assertFalse(cache["confirmed"])
+
+
+def test_visible_check_without_call_overrides_stale_bet_difference() -> None:
+    state = build_realtime_state(
+        {
+            "hero": {
+                "seat_index": 0,
+                "seat": "bottom_hero",
+                "position": "BTN",
+                "cards": ["As", "Kd"],
+                "has_cards": True,
+                "bet_bb": 13.6,
+            },
+            "dealer": {},
+            "cards": {"board": ["2c", "7d", "Th"], "hero_details": [], "board_details": []},
+            "pot": {"amount_bb": 170.0},
+            "seats": [
+                {"index": 0, "name": "bottom_hero", "bet_bb": 13.6},
+                {"index": 1, "name": "opponent", "bet_bb": 185.0},
+            ],
+            "action_controls": {
+                "visible": True,
+                "actions": ["check", "bet"],
+                "red_button_regions": [{"x": 1, "y": 1, "width": 10, "height": 10}],
+            },
+        },
+        Path("capture.mp4"),
+        timestamp_sec=1.0,
+        frame_index=1,
+        sample_index=1,
+    )
+
+    assert state["table"]["to_call_bb"] == 0.0
 
 
 if __name__ == "__main__":

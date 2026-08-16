@@ -46,7 +46,7 @@ def test_action_ocr_crop_keeps_call_detection_in_full_window_coordinates(monkeyp
         run_ocr_in_roi(frame, fake_ocr, (0.40, 0.82, 1.0, 1.0)),
     )
 
-    assert controls["actions"] == ["fold", "call"]
+    assert controls["actions"] == ["call"]
     assert controls["call_amount_bb"] == 2.0
 
 

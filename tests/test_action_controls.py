@@ -131,3 +131,67 @@ def test_pot_label_above_board_is_not_filtered_out() -> None:
 
     assert pot is not None
     assert pot["amount_bb"] == 16.8
+
+
+def test_explicit_pot_label_beats_a_closer_bare_stack_amount() -> None:
+    frame = np.zeros((733, 1101, 3), dtype=np.uint8)
+    ocr = [
+        (
+            [[500, 260], [680, 260], [680, 292], [500, 292]],
+            "\u5e95\u6c60: 13.6 BB",
+            0.82,
+        ),
+        (
+            [[500, 170], [602, 170], [602, 200], [500, 200]],
+            "170 BB",
+            0.99,
+        ),
+    ]
+
+    pot = video_vision.detect_pot(frame, ocr)
+
+    assert pot is not None
+    assert pot["amount_bb"] == 13.6
+
+
+def test_check_bet_panel_does_not_invent_fold(monkeypatch) -> None:
+    monkeypatch.setattr(
+        video_vision,
+        "detect_bottom_action_buttons",
+        lambda _frame: [
+            {"x": 10, "y": 84, "width": 45, "height": 15, "area": 500.0},
+            {"x": 65, "y": 84, "width": 45, "height": 15, "area": 500.0},
+        ],
+    )
+    frame = np.zeros((100, 120, 3), dtype=np.uint8)
+    ocr = [
+        ([[18, 86], [47, 86], [47, 96], [18, 96]], "\u8fc7\u724c", 0.96),
+        ([[73, 86], [102, 86], [102, 96], [73, 96]], "\u4e0b\u6ce8", 0.96),
+    ]
+
+    controls = video_vision.detect_action_controls(frame, ocr)
+
+    assert controls["visible"]
+    assert set(controls["actions"]) == {"check", "bet"}
+
+
+def test_player_stack_without_a_chip_is_not_a_bet_even_after_bad_pot_ocr(monkeypatch) -> None:
+    monkeypatch.setattr(video_vision, "detect_red_chips", lambda _frame: [])
+    frame = np.zeros((1000, 1000, 3), dtype=np.uint8)
+    seats = [{"name": f"seat_{index}"} for index in range(8)]
+    ocr = [
+        (
+            [[460, 205], [560, 205], [560, 255], [460, 255]],
+            "185 BB",
+            0.99,
+        )
+    ]
+
+    bets = video_vision.detect_bets(
+        frame,
+        seats,
+        ocr,
+        pot={"amount_bb": 170.0, "box": {"x": 450, "y": 300, "width": 120, "height": 40}},
+    )
+
+    assert bets == {}

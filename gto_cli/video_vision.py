@@ -440,6 +440,9 @@ def detect_pot(frame: Any, ocr_result: list[Any]) -> dict[str, Any] | None:
         amount = parse_bb_amount(text)
         if amount is None:
             continue
+        explicit_label = is_explicit_pot_text(text)
+        if not explicit_label and is_player_stack_region(text_box, frame.shape, padding_x=0.0, padding_y=0.0):
+            continue
         distance = math.hypot(center_x - width * 0.5, center_y - height * 0.30)
         candidates.append(
             {
@@ -447,7 +450,7 @@ def detect_pot(frame: Any, ocr_result: list[Any]) -> dict[str, Any] | None:
                 "text": text,
                 "confidence": round(float(raw_conf), 4),
                 "box": text_box,
-                "_rank": distance - float(raw_conf) * 20,
+                "_rank": (0 if explicit_label else 1, distance - float(raw_conf) * 20),
             }
         )
     if not candidates:
@@ -475,6 +478,8 @@ def detect_bets(frame: Any, seats: list[dict[str, Any]], ocr_result: list[Any], 
         text_seat_index, text_anchor_distance = nearest_bet_text_seat(text_box, frame.shape, len(seats))
         pot_amount = float(pot.get("amount_bb")) if pot and pot.get("amount_bb") is not None else None
         stack_sized = amount >= 20.0 if pot_amount is None else amount >= 20.0 and amount > max(20.0, pot_amount * 1.35)
+        if chip is None and is_player_stack_region(text_box, frame.shape, padding_x=0.0, padding_y=0.0):
+            continue
         # 玩家筹码余量与真实红筹码可能处在同一横向区域。只要大额数字
         # 位于玩家面板，就不是桌面下注；小盲注仍需保留。
         if stack_sized and is_player_stack_region(text_box, frame.shape):
@@ -577,8 +582,6 @@ def detect_action_controls(frame: Any, ocr_result: list[Any]) -> dict[str, Any]:
         actions.append("call")
     if visible and raise_amount is not None and "raise" not in actions:
         actions.append("raise")
-    if red_buttons and "fold" not in actions:
-        actions.insert(0, "fold")
     return {
         "visible": visible,
         "actions": actions,
@@ -620,6 +623,13 @@ def action_label_from_text(text: str) -> str | None:
     if "\u4e0b\u6ce8" in compact:
         return "bet"
     return None
+
+
+def is_explicit_pot_text(text: str) -> bool:
+    """Return whether OCR text explicitly names the pot rather than a bare amount."""
+
+    compact = text.replace(" ", "").lower()
+    return any(token in compact for token in ("\u5e95\u6c60", "\u6c60", "pot", "袝蟹袚懈", "袚懈"))
 
 
 def best_amount(candidates: list[tuple[float, float]]) -> float | None:
