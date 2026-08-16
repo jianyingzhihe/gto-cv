@@ -249,6 +249,22 @@ class ScreenOverlayTest(unittest.TestCase):
         self.assertIn("run_live_overlay_command.txt", text)
         self.assertIn("--show-overlay", text)
 
+    def test_outer_bbox_summary_starts_overlay_without_a_review_step(self) -> None:
+        payload = {
+            "bbox_text": "10,20,1200,800",
+            "overlay_command": "python gto.py screen-cv --show-overlay",
+            "files": {
+                "bbox": "calibrate/bbox.json",
+                "overlay_command": "calibrate/run_live_overlay_command.txt",
+            },
+        }
+
+        text = format_screen_summary(payload)
+
+        self.assertIn("Start recognition and overlay now:", text)
+        self.assertIn("run_live_overlay_command.txt", text)
+        self.assertNotIn("review", text.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

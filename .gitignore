@@ -25,6 +25,16 @@ pict/*
 !pict/D.png
 !pict/D_purple.png
 !pict/D_live_gray.png
+!pict/card_templates/
+!pict/card_templates/*.png
+!pict/card_models/
+pict/card_models/*
+!pict/card_models/card_glyph_knn.npz
+!pict/card_models/card_glyph_board_knn.npz
+!pict/card_models/card_glyph_hero_rank_knn.npz
+!pict/card_models/card_glyph_suit_knn.npz
+!pict/card_models/card_glyph_hero_black_suit_knn.npz
+!pict/card_models/card_glyph_board_black_suit_knn.npz
 
 # Local credentials and editor files
 .env

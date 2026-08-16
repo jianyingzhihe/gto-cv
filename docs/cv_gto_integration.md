@@ -92,28 +92,20 @@ selector:
 python gto.py screen-cv --pick-bbox --hero-name "于寻欢" --output-dir "video_frames\screen_calibrate"
 ```
 
-### Reviewed Three-Step Bbox Calibration
+### Two-Step Full-Window Calibration
 
-For a new Tencent Meeting layout, select a generous outer window first. It may
-include a little desktop or meeting chrome; it only needs to contain the whole
-poker window. The selector writes `run_review_auto_bbox_command.txt`. Run it
-directly:
+For a new Tencent Meeting layout, select one generous full poker window. It must
+contain the hero cards and bottom action buttons. The selector writes the live
+overlay command directly:
 
 ```powershell
-Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_review_auto_bbox_command.txt")
+Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_live_overlay_command.txt")
 ```
 
-A review window shows the automatic inner analysis bbox in cyan:
-
-- Press Enter or Space when the inner bbox contains the complete poker window.
-- Press `R` when it is wrong, drag the corrected inner bbox, then press Enter or
-  Space in the review window. You can repeat `R` as needed.
-- Press `C` or Esc to cancel.
-
-This step reviews only one whole-table inner bbox. It does not ask you to draw
-every seat, bet, pot, board, or action-button region. Seats, bets, pot, board,
-and card boxes use fixed relative coordinates inside this inner table and are
-shown in `analysis_layout_preview.png`.
+There is no mandatory second review window. `bbox.json` is the only manual
+full-window coordinate source. The live command automatically projects the
+existing stable inner-table/card layout into the new full window, or locates the
+inner table within the selected region when no compatible layout exists.
 
 底部操作按钮有意使用另一张输入图：每个实时画面先截取完整扑克窗口，
 再裁出已复核的内部牌桌用于识别手牌、公共牌和牌桌信息。
@@ -122,20 +114,11 @@ shown in `analysis_layout_preview.png`.
 作为按钮识别输入；否则会切掉底部一行按钮，即使屏幕上显示了弃牌、过牌、
 跟注或加注，程序也会错误报告“未看到我方操作按钮”。
 
-生成的命令有意不带 `--auto-bbox` 和 `--auto-bbox-refresh`，因此本次
-已复核的内部牌桌不会在后续运行中缩小或漂移。
-
-Inspect the live overlay first:
-
-```powershell
-Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_overlay_command.txt")
-```
-
 If the whole-table bbox is correct but only `H1/H2` are still misplaced, run
 the optional hero-card picker:
 
 ```powershell
-Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_pick_hero_cards_command.txt")
+Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_pick_hero_cards_command.txt")
 ```
 
 Drag a generous outer region containing the complete poker window, then press
@@ -146,16 +129,11 @@ and saves the selected `x,y,width,height` box plus two follow-up commands:
 - `video_frames\screen_calibrate\run_preflight_command.txt`
 - `video_frames\screen_calibrate\run_live_command.txt`
 - `video_frames\screen_calibrate\run_fast_live_command.txt`
-- `video_frames\screen_calibrate\run_overlay_diagnostic_command.txt`
+- `video_frames\screen_calibrate\run_live_overlay_command.txt`
 - `video_frames\screen_calibrate\run_pick_hero_cards_command.txt`
-- `video_frames\screen_calibrate\run_review_auto_bbox_command.txt`
 
-Run the saved health command first. It should print `Decision: READY`. Then run
-the saved preflight command. It captures and analyzes exactly one frame, writes
-`current_state.json`, and saves raw/annotated frames so you can inspect hero
-cards, board, dealer, pot, visible bets, and action state before starting the
-continuous loop. Finally run the saved live command. The live command has this
-shape:
+The health and preflight commands remain optional diagnostics. Normal use runs
+`run_live_overlay_command.txt` immediately after selecting the full window.
 
 ### Live ROI Overlay And Manual Hero Cards
 

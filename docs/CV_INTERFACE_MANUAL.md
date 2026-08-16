@@ -26,7 +26,7 @@ video_frames\screen_live\events.jsonl
 video_frames\screen_live\latest_overlay.png
 ```
 
-## 2. 第一次使用或窗口比例变化：三步定位
+## 2. 第一次使用或窗口比例变化：两步启动
 
 ### 第 1 步：圈住整个牌桌窗口
 
@@ -37,28 +37,22 @@ cd E:\dezhou
 python gto.py screen-cv --pick-bbox --hero-name "鱼寻欢" --output-dir "video_frames\screen_calibrate"
 ```
 
-鼠标拖一个尽量包含整个 WPT 窗口的外框，按 `Enter` 或 `Space` 确认。它会保存初始外框和一组后续命令。
+鼠标拖一个包含整个 WPT 窗口、底部手牌和操作按钮的外框，按 `Enter` 或 `Space` 确认。它会保存唯一的完整窗口外框和实时覆盖层命令。
 
-### 第 2 步：检查并修正自动定位
+### 第 2 步：直接启动实时识别和覆盖层
 
 ```powershell
-Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_review_auto_bbox_command.txt")
+Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_live_overlay_command.txt")
 ```
 
-弹出的图会显示程序根据外框推导出的牌桌区域、公共牌区和英雄手牌区。若位置正确，按提示确认；若不正确，重新拖动修正。确认后会写入：
+程序以刚拖出的 `bbox.json` 作为完整窗口坐标，自动复用已有内部相对布局；没有可复用布局时，会在大框内自动定位。正常流程不再弹出第二层牌桌框。
 
-```text
-video_frames\screen_calibrate\analysis_bbox.json
-```
-
-这是之后稳定识别的布局基准。`--lock-layout` 会固定使用它，避免每帧为了“纠偏”而把卡牌区漂移到头像或动画上。
-
-### 第 3 步：必要时单独修正两张手牌
+### 可选：只有 H1/H2 错位时才修正两张手牌
 
 当覆盖层里 H1/H2 没有准确框住两张底部手牌时，执行：
 
 ```powershell
-Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_pick_hero_cards_command.txt")
+Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_pick_hero_cards_command.txt")
 ```
 
 依次圈 H1 和 H2：
@@ -72,7 +66,7 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_
 Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_live_overlay_command.txt")
 ```
 
-如果脚本已生成 `run_live_overlay_command.txt`，也可以运行它进行覆盖层检查；注意旧版生成文件可能带 `--with-advice`，那一项与 CV 无关。日常纯 CV 请优先使用第 1 节命令。
+手牌框校准是排错步骤，不是每次启动的必经步骤。
 
 ## 3. `screen-cv` 命令接口
 
@@ -87,7 +81,6 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_live_over
 | `--monitor 1` | 选择显示器编号 | 多屏时指定 |
 | `--hero-name "鱼寻欢"` | 用固定昵称辅助定位英雄座位 | 日常保留 |
 | `--lock-layout` | 锁定校准后的相对牌面位置 | 日常保留 |
-| `--review-auto-bbox` | 打开第二层布局检查/修正 | 校准时使用 |
 | `--pick-hero-cards` | 手工校准 H1/H2 两张手牌 | H1/H2 框错时使用 |
 | `--hero-cards-file path` | 读取已保存的 H1/H2 配置 | 一般由校准命令自动处理 |
 | `--auto-bbox` | 在外框内自动寻找牌桌 | 仅作备用，不替代确认后的固定布局 |
@@ -131,10 +124,12 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_live_over
 
 ## 4. 换电脑或新显示比例：先预检，再开实时流
 
-新电脑、不同显示缩放比例、不同腾讯会议窗口大小，都不能直接复用旧电脑的手牌相对位置。请完整执行第 2 节的第 1、2 步，然后先运行一帧预检：
+新电脑先运行 `git pull` 和 `python -m pip install -r requirements.txt`。仓库包含实时牌面识别必需的模板和六个分类模型；启动时若缺少任一项，程序会直接列出缺失文件。
+
+新电脑、不同显示缩放比例、不同腾讯会议窗口大小，仍然只执行第 2 节的两步。实时覆盖层启动后，先检查 H1/H2 是否落在两张真实手牌上。需要进一步排错时再运行一帧预检：
 
 ```powershell
-Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_preflight_command.txt")
+Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_preflight_command.txt")
 ```
 
 预检正常的最低条件是：
@@ -143,7 +138,7 @@ Invoke-Expression (Get-Content -Raw "video_frames\screen_calibrate\run_reviewed_
 - `hero.cards` 有两张牌，而不是 `[]`、一张牌或带 `?` 的牌。
 - `ocr_mode` 不是 `disabled`。
 
-若看到 `fallback_fixed_roi`、`hero_cards_incomplete` 或 `hero.cards: []`，这不是屏幕抓取失败，而是程序没有在当前窗口中找到手牌，已经退回到不适用的固定裁剪位置。立刻按 `Ctrl+C` 停止实时程序，执行第 2 节第 3 步的手牌框校准，再执行新生成的 `run_live_overlay_command.txt`。
+若看到 `fallback_fixed_roi`、`hero_cards_incomplete` 或 `hero.cards: []`，这不是屏幕抓取失败，而是程序没有在当前窗口中找到手牌。立刻按 `Ctrl+C` 停止实时程序，执行第 2 节的可选手牌框校准，再执行新生成的 `run_live_overlay_command.txt`。
 
 `hero_turn_not_confirmed` 出现在上述情况之后，是安全保护结果：手牌不完整时，程序不会给出可操作的建议。应先修复 H1/H2，不要先调整行动判断。
 
@@ -256,7 +251,7 @@ metadata.json             裁剪位置、结果、置信度和原因
 | `ocr_mode: disabled` | 当前 Python 缺少文字识别组件，或启动时显式关闭了 OCR | 执行 `python -m pip install -r requirements.txt`，然后重新启动 |
 | `hero_action_controls_not_visible` | Hero 的底部操作区当前不可见 | 仅表示无法从按钮确认是否轮到 Hero；牌桌信息仍可继续读取 |
 | 手牌/公共牌出现 `?` | 当前裁剪或分类置信度不足 | 查看 `card_debug`，不要把 `?` 强行当成真实牌 |
-| 框跑到头像/桌面 logo | 当前布局不匹配或尚未锁定正确 H1/H2 | 重新执行三步定位，然后用 `--lock-layout` |
+| 框跑到头像/桌面 logo | 当前完整窗口或 H1/H2 相对位置不匹配 | 重新拖一次完整牌桌大框；若只有手牌框错，再单独校准 H1/H2 |
 
 ## 8. 离线视频与卡牌回放接口
 

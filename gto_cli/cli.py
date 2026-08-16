@@ -144,10 +144,10 @@ from .bbox_diagnostics import (
     format_auto_bbox_suite_summary,
 )
 from .bbox_utils import (
+    canonical_live_bbox_file,
     load_outer_bbox_text,
     load_rebased_analysis_bbox_text,
     resolve_bbox_text,
-    reviewed_bbox_requires_refresh,
 )
 from .simulator import (
     build_practice_round,
@@ -2306,20 +2306,15 @@ def command_screen_cv(args: argparse.Namespace) -> int:
         rank_model_dir=args.deep_rank_card_model_dir,
         suit_model_dir=args.deep_suit_card_model_dir,
     )
-    if args.bbox_file is not None and reviewed_bbox_requires_refresh(args.bbox_file):
-        calibration_dir = Path(args.bbox_file).parent
-        raise ValueError(
-            "检测到你重新框选了完整牌桌，但内部牌桌复核框还是旧的。"
-            f"请先运行：Invoke-Expression (Get-Content -Raw \"{calibration_dir / 'run_review_auto_bbox_command.txt'}\")"
-        )
-    bbox_text = resolve_bbox_text(args.bbox, bbox_file=args.bbox_file, latest_bbox=args.latest_bbox)
-    outer_bbox_text = load_outer_bbox_text(args.bbox_file) if args.bbox_file is not None else None
+    live_bbox_file = canonical_live_bbox_file(args.bbox_file)
+    bbox_text = resolve_bbox_text(args.bbox, bbox_file=live_bbox_file, latest_bbox=args.latest_bbox)
+    outer_bbox_text = load_outer_bbox_text(live_bbox_file) if live_bbox_file is not None else None
     reused_reviewed_inner_bbox = None
     can_reuse_reviewed_inner_bbox = not (
         args.pick_bbox or args.pick_hero_cards or args.review_auto_bbox
     )
-    if args.bbox_file is not None and can_reuse_reviewed_inner_bbox:
-        reused_reviewed_inner_bbox = load_rebased_analysis_bbox_text(args.bbox_file)
+    if live_bbox_file is not None and can_reuse_reviewed_inner_bbox:
+        reused_reviewed_inner_bbox = load_rebased_analysis_bbox_text(live_bbox_file)
         if reused_reviewed_inner_bbox is not None:
             outer_bbox_text = bbox_text
             bbox_text = reused_reviewed_inner_bbox

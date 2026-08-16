@@ -22,6 +22,7 @@ from .live_vision import (
     state_signature,
 )
 from .preflop_tracker import PreflopActionTracker
+from .runtime_assets import require_runtime_card_assets
 from .screen_bbox_review import crop_inner_from_outer, review_bbox_interactively
 from .screen_overlay import (
     LivePokerOverlay,
@@ -132,6 +133,7 @@ def analyze_screen_stream(
     console_mode: str = "advice",
     console_heartbeat_sec: float = 10.0,
 ) -> dict[str, Any]:
+    require_runtime_card_assets()
     cv2, np = load_cv()
     import mss
 
@@ -364,9 +366,11 @@ def analyze_screen_stream(
             bbox_path = output_dir / "bbox.json"
             command_path = output_dir / "run_live_command.txt"
             fast_command_path = output_dir / "run_fast_live_command.txt"
-            overlay_command_path = output_dir / "run_overlay_diagnostic_command.txt"
+            overlay_command_path = output_dir / "run_live_overlay_command.txt"
+            compatible_overlay_command_path = output_dir / "run_reviewed_overlay_command.txt"
             pick_hero_command_path = output_dir / "run_pick_hero_cards_command.txt"
-            review_bbox_command_path = output_dir / "run_review_auto_bbox_command.txt"
+            obsolete_review_bbox_command_path = output_dir / "run_review_auto_bbox_command.txt"
+            obsolete_overlay_command_path = output_dir / "run_overlay_diagnostic_command.txt"
             health_command_path = output_dir / "run_health_command.txt"
             preflight_command_path = output_dir / "run_preflight_command.txt"
             generated_min_confidence = 0.35 if abs(float(min_confidence) - 0.45) < 1e-9 else float(min_confidence)
@@ -428,13 +432,6 @@ def analyze_screen_stream(
                 f'{active_python_gto_command()} screen-cv --bbox-file "{bbox_path}" --pick-hero-cards '
                 f'--output-dir "{output_dir}" --format text'
             )
-            review_bbox_command = (
-                f'{active_python_gto_command()} screen-cv --bbox-file "{bbox_path}" --review-auto-bbox '
-                f'--output-dir "{output_dir}" --min-confidence {generated_min_confidence:g} '
-                f'--ocr-scale {float(ocr_scale):g} --dealer-refresh-frames {int(dealer_refresh_frames)} '
-                f'--effective-stack {float(effective_stack_bb):g} --villain "{villain_profile}"'
-                f'{f" --hero-name \"{hero_name}\"" if hero_name else ""} --format text'
-            )
             bbox_payload = {
                 "left": selected[0],
                 "top": selected[1],
@@ -448,8 +445,10 @@ def analyze_screen_stream(
             command_path.write_text(live_command + "\n", encoding="utf-8-sig")
             fast_command_path.write_text(fast_live_command + "\n", encoding="utf-8-sig")
             overlay_command_path.write_text(overlay_command + "\n", encoding="utf-8-sig")
+            compatible_overlay_command_path.write_text(overlay_command + "\n", encoding="utf-8-sig")
             pick_hero_command_path.write_text(pick_hero_command + "\n", encoding="utf-8-sig")
-            review_bbox_command_path.write_text(review_bbox_command + "\n", encoding="utf-8-sig")
+            obsolete_review_bbox_command_path.unlink(missing_ok=True)
+            obsolete_overlay_command_path.unlink(missing_ok=True)
             summary = {
                 "ok": True,
                 "source": source_info(region, monitor),
@@ -463,7 +462,6 @@ def analyze_screen_stream(
                 "fast_command": fast_live_command,
                 "overlay_command": overlay_command,
                 "pick_hero_command": pick_hero_command,
-                "review_bbox_command": review_bbox_command,
                 "files": {
                     "bbox": str(bbox_path),
                     "health_command": str(health_command_path),
@@ -471,12 +469,12 @@ def analyze_screen_stream(
                     "command": str(command_path),
                     "fast_command": str(fast_command_path),
                     "overlay_command": str(overlay_command_path),
+                    "compatible_overlay_command": str(compatible_overlay_command_path),
                     "pick_hero_command": str(pick_hero_command_path),
-                    "review_bbox_command": str(review_bbox_command_path),
                     "snapshot": str(snapshot_path),
                     "summary": str(summary_path),
                 },
-                "hint": "Drag the poker table region, then press Enter or Space. Press C to cancel.",
+                "hint": "The full poker window is ready. Run the saved live overlay command directly.",
             }
             summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
             return summary
@@ -3065,19 +3063,11 @@ def format_screen_summary(payload: dict[str, Any], limit: int = 12) -> str:
     if payload.get("bbox_text"):
         return "\n".join(
             [
-                f"Selected bbox: {payload['bbox_text']}",
+                f"Selected full poker window: {payload['bbox_text']}",
                 f"Saved bbox: {payload['files']['bbox']}",
-                f"Saved health command: {payload['files'].get('health_command', '-')}",
-                f"Saved command: {payload['files']['command']}",
-                f"Saved overlay command: {payload['files'].get('overlay_command', '-')}",
-                f"Saved hero-card picker: {payload['files'].get('pick_hero_command', '-')}",
-                f"Saved reviewed-inner-bbox command: {payload['files'].get('review_bbox_command', '-')}",
-                "Next calibration command:",
-                payload.get("review_bbox_command", ""),
-                "Health command:",
-                payload.get("health_command", ""),
-                "Live command:",
-                payload["command"],
+                f"Saved live overlay command: {payload['files'].get('overlay_command', '-')}",
+                "Start recognition and overlay now:",
+                payload["overlay_command"],
             ]
         )
     if payload.get("hero_cards_file") and payload.get("command"):

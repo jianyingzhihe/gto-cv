@@ -47,6 +47,19 @@ def load_bbox_payload(path: Path) -> Any:
         return json.load(stream)
 
 
+def canonical_live_bbox_file(path: Path | None) -> Path | None:
+    """实时识别始终以人工拖出的完整牌桌大框为入口。"""
+
+    if path is None:
+        return None
+    candidate = Path(path)
+    if candidate.name.lower() == "analysis_bbox.json":
+        manual_bbox = candidate.with_name("bbox.json")
+        if manual_bbox.is_file():
+            return manual_bbox
+    return candidate
+
+
 def load_outer_bbox_text(path: Path) -> str | None:
     """Return the canonical manually selected full poker-client region.
 
@@ -129,24 +142,6 @@ def load_rebased_analysis_bbox_text(manual_bbox_path: Path, *, max_aspect_ratio_
     if top + projected_height > current_outer[1] + current_outer[3]:
         return None
     return bbox_values_to_text((left, top, projected_width, projected_height))
-
-
-def reviewed_bbox_requires_refresh(path: Path) -> bool:
-    """Return whether a reviewed inner table crop predates its manual outer crop.
-
-    ``bbox.json`` is written each time the user redraws the complete poker
-    client.  ``analysis_bbox.json`` is the second, reviewed inner-table crop.
-    Running a stale reviewed crop mixes a new full window with old inner
-    coordinates, so callers must ask for another review instead of guessing.
-    """
-
-    path = Path(path)
-    if path.name.lower() != "analysis_bbox.json" or not path.is_file():
-        return False
-    manual_bbox = path.with_name("bbox.json")
-    if not manual_bbox.is_file():
-        return False
-    return manual_bbox.stat().st_mtime_ns > path.stat().st_mtime_ns
 
 
 def bbox_payload_to_text(payload: Any, *, source: Path | None = None) -> str:

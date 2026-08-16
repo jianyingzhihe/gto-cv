@@ -6,12 +6,12 @@ import os
 from pathlib import Path
 
 from gto_cli.bbox_utils import (
+    canonical_live_bbox_file,
     find_latest_bbox_file,
     load_bbox_text,
     load_outer_bbox_text,
     load_rebased_analysis_bbox_text,
     resolve_bbox_text,
-    reviewed_bbox_requires_refresh,
 )
 from gto_cli.cv_health import (
     build_fast_live_command,
@@ -79,18 +79,16 @@ class CvHealthTest(unittest.TestCase):
 
             self.assertEqual(load_outer_bbox_text(reviewed), "212,350,1233,864")
 
-    def test_reviewed_bbox_requires_refresh_after_new_manual_outer_bbox(self) -> None:
+    def test_old_reviewed_bbox_argument_uses_sibling_manual_outer_bbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             reviewed = root / "analysis_bbox.json"
             manual = root / "bbox.json"
             reviewed.write_text('{"text":"10,20,30,40"}', encoding="utf-8")
             manual.write_text('{"text":"1,2,3,4"}', encoding="utf-8")
-            os.utime(reviewed, ns=(1_000_000_000, 1_000_000_000))
-            os.utime(manual, ns=(2_000_000_000, 2_000_000_000))
 
-            self.assertTrue(reviewed_bbox_requires_refresh(reviewed))
-            self.assertFalse(reviewed_bbox_requires_refresh(manual))
+            self.assertEqual(canonical_live_bbox_file(reviewed), manual)
+            self.assertEqual(canonical_live_bbox_file(manual), manual)
 
     def test_manual_outer_bbox_reuses_reviewed_inner_table_by_relative_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
