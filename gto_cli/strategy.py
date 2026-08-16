@@ -222,6 +222,7 @@ def preflop_decision(
         "aggressive_label": aggressive_label,
         "passive_label": passive_label,
         "recommended_size_bb": preflop_size(position, scenario, stack_bb, primary),
+        "aggressive_size_bb": preflop_size(position, scenario, stack_bb, aggressive_label),
         "range_frequency": range_frequency(position, scenario, stack_bb),
     }
 

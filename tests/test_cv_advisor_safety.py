@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from gto_cli import cv_advisor
-from gto_cli.cv_advisor import action_to_call, build_gto_advice, build_size_mix, format_advice_summary
+from gto_cli.cv_advisor import (
+    action_to_call,
+    build_gto_advice,
+    build_size_mix,
+    format_advice_summary,
+    weighted_random_action,
+)
 
 
 def postflop_state(*, pot_bb: float | None) -> dict:
@@ -123,3 +129,46 @@ def test_advice_waits_when_primary_action_is_not_a_visible_button(monkeypatch) -
     assert not advice["ready"]
     assert advice["reason"] == "advice_action_not_available"
     assert advice["actions"] == ["bet", "check"]
+
+
+def test_weighted_random_action_uses_all_positive_weights() -> None:
+    mix = {"fold": 30.0, "call": 40.0, "raise": 30.0}
+
+    assert weighted_random_action(mix, 0.00) == "fold"
+    assert weighted_random_action(mix, 0.29) == "fold"
+    assert weighted_random_action(mix, 0.30) == "call"
+    assert weighted_random_action(mix, 0.69) == "call"
+    assert weighted_random_action(mix, 0.70) == "raise"
+    assert weighted_random_action(mix, 0.99) == "raise"
+
+
+def test_gto_advice_uses_weighted_sample_and_keeps_it_stable(monkeypatch) -> None:
+    state = postflop_state(pot_bb=13.6)
+    state["action_controls"] = {"visible": True, "actions": ["check", "bet"]}
+    state["table"]["to_call_bb"] = 0.0
+    monkeypatch.setattr(cv_advisor, "stable_random_value", lambda _context: 0.05)
+    monkeypatch.setattr(
+        cv_advisor,
+        "advise_state",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "mode": "postflop",
+            "decision": {
+                "primary_action": "check",
+                "mix": {"bet": 10.0, "check": 90.0},
+                "recommended_size_bb": None,
+                "confidence": "high",
+            },
+        },
+    )
+
+    first = build_gto_advice(state, effective_stack_bb=100)
+    second = build_gto_advice(state, effective_stack_bb=100)
+
+    assert first["ready"]
+    assert first["action"] == "bet"
+    assert first["model_primary_action"] == "check"
+    assert first["selection"]["method"] == "weighted_random"
+    assert first["selection"]["roll_pct"] == 5.0
+    assert first["amount_bb"] == 4.49
+    assert second["action"] == first["action"]

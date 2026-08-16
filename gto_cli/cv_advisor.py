@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import secrets
 from typing import Any
 
 from .advisor import advise_state
+
+
+_PROCESS_RANDOM_SALT = secrets.token_bytes(16)
 
 
 def attach_gto_advice(
@@ -155,7 +161,6 @@ def build_gto_advice(
             result=result,
             summary="WAIT: the strategy action space does not match the visible Hero controls.",
         )
-    amount = recommended_amount_bb(primary, decision, to_call_bb)
     size_mix = build_size_mix(
         decision=decision,
         result=result,
@@ -163,11 +168,35 @@ def build_gto_advice(
         to_call_bb=to_call_bb,
         effective_stack_bb=effective_stack_bb,
     )
+    model_primary = primary
+    action_mix = decision.get("mix") or {}
+    selection_context = {
+        "hero": advisor_state.get("hero"),
+        "table": advisor_state.get("table"),
+        "action": advisor_state.get("action"),
+        "preflop": advisor_state.get("preflop"),
+        "visible_actions": sorted(actions),
+        "mix": action_mix,
+    }
+    random_value = stable_random_value(selection_context)
+    sampled_action = weighted_random_action(action_mix, random_value)
+    if sampled_action:
+        primary = sampled_action
+    amount = recommended_amount_bb(primary, decision, to_call_bb, size_mix=size_mix)
+    selection = {
+        "method": "weighted_random" if sampled_action else "model_primary_no_positive_mix",
+        "roll_pct": round(random_value * 100.0, 4),
+        "selected_action": primary,
+        "selected_weight": as_float(action_mix.get(primary), 0.0),
+        "weights": {str(action): as_float(weight, 0.0) for action, weight in action_mix.items()},
+    }
     return {
         "ready": True,
         "should_act": True,
         "reason": "hero_action_controls_visible",
         "action": primary,
+        "model_primary_action": model_primary,
+        "selection": selection,
         "amount_bb": amount,
         "target_bet_bb": amount,
         "mix": decision.get("mix") or {},
@@ -230,6 +259,37 @@ def strategy_action_to_visible_action(action: Any) -> str:
     return normalized
 
 
+def weighted_random_action(action_mix: dict[str, Any], random_value: float) -> str | None:
+    """Choose one positive-weight action using a random value in the range [0, 1)."""
+
+    choices = [
+        (str(action), as_float(weight, 0.0))
+        for action, weight in action_mix.items()
+        if as_float(weight, 0.0) > 0
+    ]
+    if not choices:
+        return None
+    total_weight = sum(weight for _action, weight in choices)
+    bounded_value = min(max(float(random_value), 0.0), 0.9999999999999999)
+    threshold = bounded_value * total_weight
+    cumulative = 0.0
+    for action, weight in choices:
+        cumulative += weight
+        if threshold < cumulative:
+            return action
+    return choices[-1][0]
+
+
+def stable_random_value(context: dict[str, Any]) -> float:
+    """Return a process-randomized value that stays stable for identical decision context."""
+
+    encoded = json.dumps(context, ensure_ascii=True, sort_keys=True, separators=(",", ":"), default=str).encode(
+        "utf-8"
+    )
+    digest = hashlib.blake2b(_PROCESS_RANDOM_SALT + encoded, digest_size=8).digest()
+    return int.from_bytes(digest, "big") / float(1 << 64)
+
+
 def attach_explicit_preflop_context(source_state: dict[str, Any], advisor_state: dict[str, Any]) -> None:
     """Pass declared upstream facts through without deriving a scenario from CV bets."""
 
@@ -253,12 +313,26 @@ def attach_explicit_preflop_context(source_state: dict[str, Any], advisor_state:
         advisor_state["action"]["scenario"] = declared_scenario
 
 
-def recommended_amount_bb(action: str | None, decision: dict[str, Any], to_call_bb: float) -> float | None:
+def recommended_amount_bb(
+    action: str | None,
+    decision: dict[str, Any],
+    to_call_bb: float,
+    *,
+    size_mix: dict[str, Any] | None = None,
+) -> float | None:
     if action in ("fold", "check"):
         return 0.0
     if action == "call":
         return round(to_call_bb, 2)
-    size = decision.get("recommended_size_bb")
+    size = decision.get("recommended_size_bb") or decision.get("aggressive_size_bb")
+    if size is None:
+        candidates = [
+            item
+            for item in list((size_mix or {}).get("items") or [])
+            if str(item.get("action") or "") == str(action or "") and item.get("amount_bb") is not None
+        ]
+        if candidates:
+            size = max(candidates, key=lambda item: float(item.get("frequency_pct") or 0.0)).get("amount_bb")
     if size is None:
         return None
     return round(float(size), 2)
@@ -275,7 +349,7 @@ def build_size_mix(
     mode = str(result.get("mode") or "")
     items: list[dict[str, Any]] = []
     if mode == "preflop":
-        size = as_float(decision.get("recommended_size_bb"), None)
+        size = as_float(decision.get("aggressive_size_bb") or decision.get("recommended_size_bb"), None)
         for action, frequency in action_mix.items():
             if frequency <= 0:
                 continue
