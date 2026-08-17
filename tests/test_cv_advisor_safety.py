@@ -48,6 +48,17 @@ def test_call_amount_larger_than_effective_stack_is_rejected() -> None:
     assert source == "table_bets_rejected_control_amount"
 
 
+def test_small_hero_blind_is_rejected_when_table_call_is_larger() -> None:
+    amount, source = action_to_call(
+        {"actions": ["fold", "call", "raise"], "call_amount_bb": 0.4},
+        {"to_call_bb": 5.1},
+        effective_stack_bb=100,
+    )
+
+    assert amount == 5.1
+    assert source == "table_bets_rejected_control_mismatch"
+
+
 def test_postflop_advice_uses_visible_bets_when_control_amount_is_a_stack() -> None:
     advice = build_gto_advice(postflop_state(pot_bb=12.0), effective_stack_bb=100)
 
@@ -78,6 +89,18 @@ def test_all_in_choice_is_recognized_but_not_sent_to_normal_gto_advice() -> None
     assert not advice["ready"]
     assert advice["should_act"] is False
     assert advice["reason"] == "all_in_action_not_supported"
+
+
+def test_duplicate_visible_card_returns_specific_safe_wait() -> None:
+    state = postflop_state(pot_bb=249.0)
+    state["hero"]["cards"] = ["Ah", "7h"]
+    state["table"]["board"] = ["6s", "Ad", "7c", "2c", "2c"]
+
+    advice = build_gto_advice(state)
+
+    assert not advice["ready"]
+    assert advice["reason"] == "duplicate_cards_in_state"
+    assert advice["duplicate_cards"] == ["2c"]
 
 
 def test_displayed_sizing_uses_pot_percentages_not_bb_amounts() -> None:

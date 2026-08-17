@@ -197,6 +197,89 @@ def test_three_button_panel_restores_fold_when_ocr_misses_left_label(monkeypatch
     assert set(controls["actions"]) == {"fold", "call", "raise"}
 
 
+def test_three_action_buttons_ignore_two_small_slider_buttons_and_hero_blind(monkeypatch) -> None:
+    monkeypatch.setattr(
+        video_vision,
+        "detect_bottom_action_buttons",
+        lambda _frame: [
+            {"x": 767, "y": 816, "width": 159, "height": 65, "area": 9829.0},
+            {"x": 941, "y": 816, "width": 159, "height": 65, "area": 10013.0},
+            {"x": 1115, "y": 816, "width": 158, "height": 65, "area": 9961.0},
+            {"x": 1055, "y": 765, "width": 40, "height": 36, "area": 1350.5},
+            {"x": 1234, "y": 765, "width": 40, "height": 36, "area": 1348.0},
+        ],
+    )
+    frame = np.zeros((896, 1275, 3), dtype=np.uint8)
+    ocr = [
+        ([[999, 820], [1040, 820], [1040, 844], [999, 844]], "\u8ddf\u6ce8", 0.66),
+        ([[1173, 820], [1213, 820], [1213, 844], [1173, 844]], "\u52a0\u6ce8", 0.66),
+        ([[717, 827], [766, 827], [766, 846], [717, 846]], "0.4BB", 0.83),
+        ([[982, 843], [1057, 843], [1057, 872], [982, 872]], "5.1BB", 0.76),
+        ([[1150, 843], [1237, 843], [1237, 872], [1150, 872]], "10.1BB", 0.75),
+    ]
+
+    controls = video_vision.detect_action_controls(frame, ocr)
+
+    assert set(controls["actions"]) == {"fold", "call", "raise"}
+    assert controls["call_amount_bb"] == 5.1
+    assert controls["raise_amount_bb"] == 10.1
+
+
+def test_small_bet_text_near_anchor_is_not_discarded_as_a_player_stack(monkeypatch) -> None:
+    monkeypatch.setattr(video_vision, "detect_red_chips", lambda _frame: [])
+    frame = np.zeros((805, 1129, 3), dtype=np.uint8)
+    seats = video_vision.build_seats(1129, 805, 8)
+    ocr = [
+        (
+            [[281, 567], [393, 573], [392, 607], [281, 601]],
+            "#2BB",
+            0.61,
+        )
+    ]
+
+    bets = video_vision.detect_bets(frame, seats, ocr, pot={"amount_bb": 9.5})
+
+    assert bets[1]["amount_bb"] == 2.0
+
+
+def test_frame_analysis_retries_a_missing_top_preflop_contribution(monkeypatch) -> None:
+    frame = np.zeros((805, 1129, 3), dtype=np.uint8)
+    base_ocr = [
+        ([[480, 225], [650, 225], [650, 255], [480, 255]], "\u5e95\u6c60: 14BB", 0.90),
+        ([[960, 370], [1020, 370], [1020, 400], [960, 400]], "9BB", 0.90),
+        ([[760, 510], [810, 510], [810, 540], [760, 540]], "1BB", 0.90),
+        ([[580, 550], [630, 550], [630, 580], [580, 580]], "2BB", 0.90),
+    ]
+    retry_ocr = [
+        ([[580, 185], [635, 185], [635, 215], [580, 215]], "2BB", 0.90),
+    ]
+    monkeypatch.setattr(video_vision, "detect_red_chips", lambda _frame: [])
+    monkeypatch.setattr(
+        video_vision,
+        "find_dealer_button",
+        lambda *_args, **_kwargs: {"center": {"x": 565, "y": 100}},
+    )
+    monkeypatch.setattr(video_vision, "detect_action_controls", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        video_vision,
+        "detect_visible_cards",
+        lambda *_args, **_kwargs: {"hero": [], "board": []},
+    )
+    monkeypatch.setattr(video_vision, "detect_card_statuses", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(video_vision, "run_ocr_in_roi", lambda *_args, **_kwargs: retry_ocr)
+
+    result = video_vision.analyze_video_frame(
+        frame,
+        template=None,
+        ocr=object(),
+        ocr_result_hint=base_ocr,
+    )
+
+    amounts = {item["seat_index"]: item["amount_bb"] for item in result["detected_bets"]}
+    assert amounts == {0: 2.0, 4: 2.0, 6: 9.0, 7: 1.0}
+    assert result["timing_ms"]["bet_retry_used"] == 1.0
+
+
 def test_truncated_call_decimal_is_inferred_from_paired_raise(monkeypatch) -> None:
     monkeypatch.setattr(
         video_vision,

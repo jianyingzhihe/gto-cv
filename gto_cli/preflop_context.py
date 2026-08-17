@@ -103,6 +103,20 @@ def build_preflop_context(state: dict[str, Any]) -> dict[str, Any]:
 
     raises = [event for event in actions_before_hero if event["action"] in RAISE_ACTIONS]
     calls_or_limps = [event for event in actions_before_hero if event["action"] in CALL_ACTIONS]
+    hero_calls = [event for event in calls_or_limps if event.get("is_hero")]
+    if hero_calls and any(event["index"] > hero_calls[-1]["index"] for event in raises):
+        return context_payload(
+            raw_position=raw_position,
+            solver_position=solver_position,
+            action_order=action_order,
+            to_call_bb=to_call_bb,
+            history_available=True,
+            actions_before_hero=actions_before_hero,
+            status="cold_call_facing_squeeze",
+            scenario=None,
+            source=history_source,
+            needs=["cold-call facing a later raise strategy is not configured"],
+        )
     if not raises and calls_or_limps:
         return context_payload(
             raw_position=raw_position,

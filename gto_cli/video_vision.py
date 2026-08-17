@@ -295,6 +295,15 @@ def analyze_video_frame(
     step_started = time.perf_counter()
     cards = cards_hint if cards_hint is not None else detect_visible_cards(frame, layout_profile=layout_profile)
     timing["cards_ms"] = elapsed_ms(step_started)
+    if should_retry_missing_top_preflop_bet(cards, pot, bets, seats):
+        step_started = time.perf_counter()
+        retry_ocr = run_ocr_in_roi(frame, ocr, (0.40, 0.18, 0.65, 0.44), scale=1.0)
+        retry_bets = detect_bets(frame, seats, ocr_result=[*ocr_result, *retry_ocr], pot=pot)
+        timing["bet_retry_ocr_ms"] = elapsed_ms(step_started)
+        if bets_reconcile_pot_better(pot, bets, retry_bets):
+            ocr_result = [*ocr_result, *retry_ocr]
+            bets = retry_bets
+            timing["bet_retry_used"] = 1.0
     step_started = time.perf_counter()
     card_statuses = detect_card_statuses(frame, seat_count)
     timing["card_status_ms"] = elapsed_ms(step_started)
@@ -395,6 +404,43 @@ def run_ocr_in_roi(
     return offset_ocr_result(run_ocr(crop, ocr, scale=scale), x1, y1)
 
 
+def should_retry_missing_top_preflop_bet(
+    cards: dict[str, Any],
+    pot: dict[str, Any] | None,
+    bets: dict[int, dict[str, Any]],
+    seats: list[dict[str, Any]],
+) -> bool:
+    """Retry only the top contribution when a common preflop amount is missing."""
+
+    if len(seats) != 8 or 4 in bets:
+        return False
+    if list(cards.get("board") or []) or cards.get("board_pending"):
+        return False
+    pot_amount = float(pot.get("amount_bb")) if pot and pot.get("amount_bb") is not None else None
+    if pot_amount is None or pot_amount <= 0:
+        return False
+    visible_total = sum(float(item.get("amount_bb") or 0.0) for item in bets.values())
+    missing = pot_amount - visible_total
+    return any(abs(missing - amount) <= 0.15 for amount in (0.4, 1.0, 2.0))
+
+
+def bets_reconcile_pot_better(
+    pot: dict[str, Any] | None,
+    current: dict[int, dict[str, Any]],
+    retry: dict[int, dict[str, Any]],
+) -> bool:
+    """Accept a retry only when it moves visible contributions toward the pot."""
+
+    pot_amount = float(pot.get("amount_bb")) if pot and pot.get("amount_bb") is not None else None
+    if pot_amount is None:
+        return False
+    current_total = sum(float(item.get("amount_bb") or 0.0) for item in current.values())
+    retry_total = sum(float(item.get("amount_bb") or 0.0) for item in retry.values())
+    current_gap = abs(pot_amount - current_total)
+    retry_gap = abs(pot_amount - retry_total)
+    return retry_gap + 0.15 < current_gap and retry_total <= pot_amount + 0.15
+
+
 def scale_ocr_result(result: list[Any], factor: float) -> list[Any]:
     scaled = []
     for item in result:
@@ -483,7 +529,7 @@ def detect_bets(frame: Any, seats: list[dict[str, Any]], ocr_result: list[Any], 
             chip is None
             and text_seat_index is not None
             and raw_amount <= 2.05
-            and text_anchor_distance <= 72.0
+            and text_anchor_distance <= 84.0
         )
         if (
             chip is None
@@ -532,6 +578,8 @@ def detect_bets(frame: Any, seats: list[dict[str, Any]], ocr_result: list[Any], 
 
 def detect_action_controls(frame: Any, ocr_result: list[Any]) -> dict[str, Any]:
     height, width = frame.shape[:2]
+    red_buttons = detect_bottom_action_buttons(frame)
+    action_button_row = dominant_action_button_row(red_buttons)
     bottom_texts = []
     call_amounts = []
     raise_amounts = []
@@ -554,19 +602,34 @@ def detect_action_controls(frame: Any, ocr_result: list[Any]) -> dict[str, Any]:
         if center_y < 0.90 * height:
             continue
         if amount is None:
-            if 0.58 * width <= center_x <= 0.84 * width:
+            if action_amount_role(center_x, center_y, action_button_row) == "call":
                 truncated_prefix = parse_truncated_bb_prefix(text)
                 if truncated_prefix is not None:
                     truncated_call_prefixes.append((float(raw_conf), truncated_prefix))
             continue
-        if 0.58 * width <= center_x <= 0.84 * width:
+        amount_role = action_amount_role(center_x, center_y, action_button_row)
+        if (
+            amount_role is None
+            and label in {"call", "raise"}
+            and label_box_overlaps_button(text_box, action_button_row)
+        ):
+            # Some themes expose one large action button rather than a full
+            # three-button row. Its explicit label is still a safe amount
+            # anchor; a nearby bare blind amount is not.
+            amount_role = label
+        if amount_role == "call":
             call_amounts.append((float(raw_conf), amount))
-        elif center_x > 0.82 * width:
+        elif amount_role == "raise":
             raise_amounts.append((float(raw_conf), amount))
+        elif not action_button_row:
+            # Text-only themes have no colored surfaces to anchor against.
+            if 0.66 * width <= center_x <= 0.84 * width:
+                call_amounts.append((float(raw_conf), amount))
+            elif center_x > 0.84 * width:
+                raise_amounts.append((float(raw_conf), amount))
 
     call_amount = best_amount(call_amounts)
     raise_amount = best_amount(raise_amounts)
-    red_buttons = detect_bottom_action_buttons(frame)
     detected_labels = {label for label, _box in label_boxes}
     if red_buttons:
         # The client leaves pre-action labels such as "call 2BB" visible in
@@ -640,9 +703,9 @@ def label_box_overlaps_button(text_box: dict[str, int], buttons: list[dict[str, 
 
 
 def looks_like_three_action_button_panel(buttons: list[dict[str, Any]]) -> bool:
-    if len(buttons) != 3:
+    ordered = dominant_action_button_row(buttons)
+    if len(ordered) != 3:
         return False
-    ordered = sorted(buttons, key=lambda item: float(item.get("x") or 0.0))
     widths = [float(item.get("width") or 0.0) for item in ordered]
     heights = [float(item.get("height") or 0.0) for item in ordered]
     centers_y = [
@@ -661,6 +724,53 @@ def looks_like_three_action_button_panel(buttons: list[dict[str, Any]]) -> bool:
         if gap < -min(widths) * 0.15 or gap > max(widths) * 0.75:
             return False
     return True
+
+
+def dominant_action_button_row(buttons: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the large action buttons and discard the small slider controls."""
+
+    if not buttons:
+        return []
+    areas = [
+        float(item.get("area") or 0.0)
+        or float(item.get("width") or 0.0) * float(item.get("height") or 0.0)
+        for item in buttons
+    ]
+    widths = [float(item.get("width") or 0.0) for item in buttons]
+    heights = [float(item.get("height") or 0.0) for item in buttons]
+    max_area = max(areas, default=0.0)
+    max_width = max(widths, default=0.0)
+    max_height = max(heights, default=0.0)
+    dominant = [
+        item
+        for item, area, button_width, button_height in zip(buttons, areas, widths, heights)
+        if area >= max_area * 0.42
+        and button_width >= max_width * 0.55
+        and button_height >= max_height * 0.55
+    ]
+    return sorted(dominant, key=lambda item: float(item.get("x") or 0.0))
+
+
+def action_amount_role(
+    center_x: float,
+    center_y: float,
+    buttons: list[dict[str, Any]],
+) -> str | None:
+    """Map an amount to the middle CALL or right RAISE button."""
+
+    if len(buttons) != 3:
+        return None
+    for index, button in enumerate(buttons):
+        left = float(button.get("x") or 0.0)
+        top = float(button.get("y") or 0.0)
+        right = left + float(button.get("width") or 0.0)
+        bottom = top + float(button.get("height") or 0.0)
+        if left <= center_x <= right and top <= center_y <= bottom:
+            if index == 1:
+                return "call"
+            if index == 2:
+                return "raise"
+    return None
 
 
 def infer_truncated_call_amount(

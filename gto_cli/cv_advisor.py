@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+from collections import Counter
 from typing import Any
 
 from .advisor import advise_state
@@ -71,6 +72,15 @@ def build_gto_advice(
         return not_ready("board_cards_incomplete", board=board)
     if board and not complete_cards(board, expected=len(board)):
         return not_ready("board_cards_incomplete", board=board)
+    duplicate_cards = sorted(card for card, count in Counter([*cards, *board]).items() if count > 1)
+    if duplicate_cards:
+        return not_ready(
+            "duplicate_cards_in_state",
+            duplicate_cards=duplicate_cards,
+            hero_cards=cards,
+            board=board,
+            summary="WAIT: the same physical card was recognized more than once; wait for a stable frame.",
+        )
 
     street = str(table.get("street") or street_from_board(board)).lower()
     raw_pot_bb = as_float(table.get("pot_bb"), None)
@@ -122,7 +132,12 @@ def build_gto_advice(
     preflop_context = result.get("preflop_context") or {}
     if result.get("mode") == "preflop" and primary == "wait":
         status = str(preflop_context.get("status") or "")
-        unsupported = status in {"four_bet_or_more", "limped_pot", "unsupported_scenario"}
+        unsupported = status in {
+            "four_bet_or_more",
+            "limped_pot",
+            "unsupported_scenario",
+            "cold_call_facing_squeeze",
+        }
         return not_ready(
             "preflop_scenario_not_supported" if unsupported else "preflop_context_incomplete",
             preflop_context=preflop_context,
@@ -233,6 +248,8 @@ def action_to_call(
         return table_call, "table_bets"
     if call_amount < 0 or call_amount > effective_stack_bb + 0.15:
         return table_call, "table_bets_rejected_control_amount"
+    if table_call > 0 and call_amount + max(0.15, table_call * 0.20) < table_call:
+        return table_call, "table_bets_rejected_control_mismatch"
     if table_call > 0 and call_amount > max(table_call * 4.0, table_call + 8.0):
         return table_call, "table_bets_rejected_control_mismatch"
     return call_amount, "action_controls"

@@ -292,6 +292,78 @@ def test_tracker_recovers_open_when_only_big_blind_chip_is_unreadable() -> None:
     assert advice["scenario"] == "vs_open"
 
 
+def test_tracker_uses_pot_to_imply_one_missing_forced_blind() -> None:
+    state = {
+        "ok": True,
+        "table": {"street": "preflop", "board": [], "pot_bb": 5.4, "to_call_bb": 2.0},
+        "confidence": {"pot_ocr": 0.84},
+        "hero": {
+            "seat": "bottom_hero",
+            "position": "BTN",
+            "gto_position": "BTN",
+            "preflop_action_order": 6,
+            "cards": ["Ah", "7c"],
+            "bet_bb": None,
+        },
+        "seats": [
+            seat("utg", "UTG", 1, "active_or_showdown", 2.0),
+            seat("utg1", "UTG+1", 2, "folded_or_empty", None),
+            seat("lj", "LJ", 3, "active_or_showdown", 2.0),
+            seat("hj", "HJ", 4, "folded_or_empty", None),
+            seat("co", "CO", 5, "folded_or_empty", None),
+            seat("bottom_hero", "BTN", 6, "active_or_showdown", None),
+            seat("sb", "SB", 7, "active_or_showdown", 0.4),
+            seat("bb", "BB", 8, "active_or_showdown", None),
+        ],
+        "action_controls": {"visible": True, "actions": ["fold", "call", "raise"], "call_amount_bb": 0.4},
+        "hero_turn": {"is_turn": True},
+    }
+
+    PreflopActionTracker().update(state)
+
+    assert "preflop_tracker" not in state
+    assert [item["action"] for item in state["preflop"]["action_history"][:-1]] == [
+        "raise",
+        "fold",
+        "call",
+        "fold",
+        "fold",
+    ]
+
+
+def test_tracker_prefers_table_call_when_control_ocr_reads_hero_blind() -> None:
+    state = {
+        "ok": True,
+        "table": {"street": "preflop", "board": [], "pot_bb": 10.0, "to_call_bb": 5.0},
+        "confidence": {"pot_ocr": 0.82},
+        "hero": {
+            "seat": "bottom_hero",
+            "position": "UTG",
+            "gto_position": "UTG",
+            "preflop_action_order": 1,
+            "cards": ["9d", "6c"],
+            "bet_bb": 2.0,
+        },
+        "seats": [
+            seat("bottom_hero", "UTG", 1, "active_or_showdown", 2.0),
+            seat("utg1", "UTG+1", 2, "folded_or_empty", None),
+            seat("lj", "LJ", 3, "folded_or_empty", None),
+            seat("hj", "HJ", 4, "folded_or_empty", None),
+            seat("co", "CO", 5, "folded_or_empty", None),
+            seat("btn", "BTN", 6, "folded_or_empty", None),
+            seat("sb", "SB", 7, "active_or_showdown", 7.0),
+            seat("bb", "BB", 8, "active_or_showdown", 1.0),
+        ],
+        "action_controls": {"visible": True, "actions": ["fold", "call", "raise"], "call_amount_bb": 0.4},
+        "hero_turn": {"is_turn": True},
+    }
+
+    PreflopActionTracker().update(state)
+
+    assert "preflop_tracker" not in state
+    assert build_gto_advice(state)["scenario"] == "vs_3bet"
+
+
 def test_tracker_uses_reconciled_pot_to_ignore_false_active_avatar_before_hero() -> None:
     state = {
         "ok": True,
@@ -512,6 +584,48 @@ def test_tracker_reconstructs_all_in_four_bet_from_pot_change_and_call_button() 
     advice = build_gto_advice(facing_all_in)
     assert not advice["ready"]
     assert advice["reason"] == "preflop_scenario_not_supported"
+
+
+def test_tracker_marks_cold_call_facing_squeeze_as_unsupported() -> None:
+    tracker = PreflopActionTracker()
+    state = state_for_hero_turn(hero_position="UTG+1", hero_order=2)
+    state["hero"].update(
+        {
+            "position": "UTG+1",
+            "gto_position": "UTG",
+            "preflop_action_order": 2,
+            "bet_bb": 2.0,
+        }
+    )
+    state["seats"] = [
+        seat("utg", "UTG", 1, "active_or_showdown", 2.0),
+        seat("bottom_hero", "UTG+1", 2, "active_or_showdown", 2.0),
+        seat("lj", "LJ", 3, "folded_or_empty", None),
+        seat("hj", "HJ", 4, "folded_or_empty", None),
+        seat("co", "CO", 5, "folded_or_empty", None),
+        seat("btn", "BTN", 6, "active_or_showdown", 5.7),
+        seat("sb", "SB", 7, "folded_or_empty", 0.4),
+        seat("bb", "BB", 8, "folded_or_empty", 1.0),
+    ]
+    state["table"].update({"pot_bb": 11.1, "to_call_bb": 3.7, "dealer_seat": "btn"})
+    state["action_controls"] = {
+        "visible": True,
+        "actions": ["fold", "call", "raise"],
+        "call_amount_bb": 3.7,
+    }
+    state["hero_turn"] = {"is_turn": True}
+
+    tracker.update(state)
+
+    history = state["preflop"]["action_history"]
+    assert [(event.get("position"), event["action"]) for event in history[:2]] == [
+        ("UTG", "raise"),
+        ("UTG+1", "call"),
+    ]
+    advice = build_gto_advice(state)
+    assert not advice["ready"]
+    assert advice["reason"] == "preflop_scenario_not_supported"
+    assert advice["preflop_context"]["status"] == "cold_call_facing_squeeze"
 
 
 def test_tracker_keeps_confirmed_layout_when_a_weak_dealer_match_rotates_positions() -> None:

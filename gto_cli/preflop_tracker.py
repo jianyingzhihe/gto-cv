@@ -330,6 +330,9 @@ def infer_visible_prehero_history_with_reason(state: dict[str, Any]) -> tuple[li
         reconstructed = infer_utg_open_after_later_raises(state, sizes, hero_bet)
         if reconstructed is not None:
             return reconstructed, "utg_open_after_later_raises_reconstructed_from_pot"
+        reconstructed = infer_cold_call_facing_later_raise(state, sizes, hero_bet)
+        if reconstructed is not None:
+            return reconstructed, "cold_call_facing_later_raise_reconstructed_from_pot"
         return None, "hero_already_invested_before_sync"
     if not blind_posts_confirmed(state, sizes):
         if not missing_big_blind_is_safely_implied(state, hero_order, sizes):
@@ -338,7 +341,10 @@ def infer_visible_prehero_history_with_reason(state: dict[str, Any]) -> tuple[li
     history: list[dict[str, Any]] = []
     raise_to = sizes["bb"]
     raise_count = 0
-    pot_confirms_all_visible_contributions = visible_preflop_contributions_match_pot(state)
+    pot_confirms_all_visible_contributions = visible_preflop_contributions_match_pot(
+        state,
+        include_missing_blinds=True,
+    )
     for seat in ordered_seats(state):
         order = action_order(seat)
         if order <= 0 or order >= hero_order:
@@ -424,9 +430,7 @@ def infer_utg_open_after_later_raises(
     if raise_count < 2:
         return None
 
-    call_amount = number_or_none(controls.get("call_amount_bb"))
-    if call_amount is None:
-        call_amount = number_or_none(as_dict(state.get("table")).get("to_call_bb"))
+    call_amount = trusted_call_amount(state)
     if call_amount is None or abs(call_amount - (raise_to - hero_bet)) > EPSILON_BB:
         return None
 
@@ -443,6 +447,73 @@ def infer_utg_open_after_later_raises(
     return history
 
 
+def infer_cold_call_facing_later_raise(
+    state: dict[str, Any],
+    sizes: dict[str, float],
+    hero_bet: float,
+) -> list[dict[str, Any]] | None:
+    """Reconstruct a cold call followed by a later raise from one reconciled frame."""
+
+    hero = as_dict(state.get("hero"))
+    hero_order = int_or_none(hero.get("preflop_action_order"))
+    if hero_order is None or hero_order <= 1:
+        return None
+    if not blind_posts_present_in_raised_pot(state, sizes):
+        return None
+    if not visible_preflop_contributions_match_pot(state):
+        return None
+
+    controls = as_dict(state.get("action_controls"))
+    hero_turn = as_dict(state.get("hero_turn"))
+    actions = {str(action).lower() for action in list(controls.get("actions") or [])}
+    if not hero_turn.get("is_turn") or "call" not in actions:
+        return None
+
+    hero_seat = str(hero.get("seat") or "")
+    history: list[dict[str, Any]] = []
+    raise_to = sizes["bb"]
+    raise_count = 0
+    hero_called = False
+    later_raise_seen = False
+    for seat in ordered_seats(state):
+        order = action_order(seat)
+        if order <= 0:
+            continue
+        amount = number_or_none(seat.get("bet_bb")) or 0.0
+        post = blind_post(seat, sizes)
+        is_hero = str(seat.get("seat") or "") == hero_seat
+        if is_hero:
+            if raise_count != 1 or abs(hero_bet - raise_to) > EPSILON_BB:
+                return None
+            history.append(history_event(len(history) + 1, seat, "call", hero_bet))
+            hero_called = True
+            continue
+        if amount <= post + EPSILON_BB:
+            history.append(history_event(len(history) + 1, seat, "fold", None))
+            continue
+        if amount > raise_to + EPSILON_BB:
+            action = raise_action_name(raise_count)
+            raise_to = amount
+            raise_count += 1
+            if hero_called:
+                later_raise_seen = True
+        elif abs(amount - raise_to) <= EPSILON_BB:
+            action = "call"
+        else:
+            return None
+        history.append(history_event(len(history) + 1, seat, action, amount))
+
+    call_amount = trusted_call_amount(state)
+    if (
+        not hero_called
+        or not later_raise_seen
+        or call_amount is None
+        or abs(call_amount - (raise_to - hero_bet)) > EPSILON_BB
+    ):
+        return None
+    return history
+
+
 def blind_posts_present_in_raised_pot(state: dict[str, Any], sizes: dict[str, float]) -> bool:
     """Accept blind seats that have later called or raised, not only exact blind chips."""
 
@@ -454,7 +525,11 @@ def blind_posts_present_in_raised_pot(state: dict[str, Any], sizes: dict[str, fl
     return True
 
 
-def visible_preflop_contributions_match_pot(state: dict[str, Any]) -> bool:
+def visible_preflop_contributions_match_pot(
+    state: dict[str, Any],
+    *,
+    include_missing_blinds: bool = False,
+) -> bool:
     """仅在底池金额和当前每个座位的可见下注相符时启用保守补全。"""
 
     table = as_dict(state.get("table"))
@@ -468,6 +543,12 @@ def visible_preflop_contributions_match_pot(state: dict[str, Any]) -> bool:
         max(0.0, number_or_none(seat.get("bet_bb")) or 0.0)
         for seat in ordered_seats(state)
     )
+    if include_missing_blinds:
+        sizes = blind_sizes(state)
+        for seat in ordered_seats(state):
+            position = str(seat.get("position") or "")
+            if position in {"SB", "BB"} and number_or_none(seat.get("bet_bb")) is None:
+                visible_total += sizes[position.lower()]
     return abs(pot_bb - visible_total) <= EPSILON_BB
 
 
@@ -572,13 +653,21 @@ def blind_posts_confirmed(state: dict[str, Any], sizes: dict[str, float]) -> boo
 
     seats = [as_dict(seat) for seat in list(state.get("seats") or [])]
     by_position = {str(seat.get("position") or ""): seat for seat in seats}
-    bb = by_position.get("BB")
-    if not amount_matches(bb, sizes["bb"]):
-        return False
     hero_position = str(as_dict(state.get("hero")).get("position") or "")
+    bb = by_position.get("BB")
+    if amount_matches(bb, sizes["bb"]):
+        if hero_position == "BB" or amount_matches(by_position.get("SB"), sizes["sb"]):
+            return True
     if hero_position == "BB":
-        return True
-    return amount_matches(by_position.get("SB"), sizes["sb"])
+        return False
+
+    # A forced blind can briefly disappear under an animation. Accept the
+    # omission only when the trusted pot closes the exact missing-blind gap.
+    for position, expected in (("SB", sizes["sb"]), ("BB", sizes["bb"])):
+        observed = number_or_none(as_dict(by_position.get(position)).get("bet_bb"))
+        if observed is not None and abs(observed - expected) > EPSILON_BB:
+            return False
+    return visible_preflop_contributions_match_pot(state, include_missing_blinds=True)
 
 
 def missing_big_blind_is_safely_implied(state: dict[str, Any], hero_order: int, sizes: dict[str, float]) -> bool:
@@ -609,9 +698,7 @@ def missing_big_blind_is_safely_implied(state: dict[str, Any], hero_order: int, 
         {str(action) for action in list(controls.get("actions") or [])}
     ):
         return False
-    call_amount = number_or_none(controls.get("call_amount_bb"))
-    if call_amount is None:
-        call_amount = number_or_none(as_dict(state.get("table")).get("to_call_bb"))
+    call_amount = trusted_call_amount(state)
     if call_amount is None or call_amount <= sizes["bb"] + EPSILON_BB:
         return False
 
@@ -623,6 +710,18 @@ def missing_big_blind_is_safely_implied(state: dict[str, Any], hero_order: int, 
         if amount > sizes["bb"] + EPSILON_BB and abs(amount - call_amount) <= EPSILON_BB:
             return True
     return False
+
+
+def trusted_call_amount(state: dict[str, Any]) -> float | None:
+    """Prefer table contributions when button OCR accidentally reads Hero's blind."""
+
+    controls = as_dict(state.get("action_controls"))
+    control_call = number_or_none(controls.get("call_amount_bb"))
+    table_call = number_or_none(as_dict(state.get("table")).get("to_call_bb"))
+    if table_call is not None and control_call is not None:
+        if abs(table_call - control_call) > EPSILON_BB:
+            return table_call
+    return control_call if control_call is not None else table_call
 
 
 def amount_matches(seat: dict[str, Any] | None, expected: float) -> bool:
