@@ -80,3 +80,59 @@ def test_stack_panel_amount_is_never_treated_as_a_bet_even_with_a_nearby_chip(mo
     bets = video_vision.detect_bets(frame, seats, ocr)
 
     assert bets == {}
+
+
+def test_chipless_big_blind_close_to_bet_anchor_survives_stack_overlap(monkeypatch) -> None:
+    monkeypatch.setattr(video_vision, "detect_red_chips", lambda _frame: [])
+    frame = np.zeros((736, 1120, 3), dtype=np.uint8)
+    seats = [{"name": f"seat_{index}"} for index in range(8)]
+    ocr = [
+        (
+            [[98, 372], [195, 372], [195, 403], [98, 403]],
+            "1 BB",
+            0.91,
+        )
+    ]
+
+    bets = video_vision.detect_bets(frame, seats, ocr)
+
+    assert bets[2]["amount_bb"] == 1.0
+
+
+def test_repaired_player_stack_is_not_rescued_as_a_blind(monkeypatch) -> None:
+    monkeypatch.setattr(video_vision, "detect_red_chips", lambda _frame: [])
+    frame = np.zeros((736, 1120, 3), dtype=np.uint8)
+    seats = [{"name": f"seat_{index}"} for index in range(8)]
+    ocr = [
+        (
+            [[98, 372], [195, 372], [195, 403], [98, 403]],
+            "81 BB",
+            0.94,
+        )
+    ]
+
+    bets = video_vision.detect_bets(
+        frame,
+        seats,
+        ocr,
+        pot={"amount_bb": 5.4, "box": {"x": 460, "y": 250, "width": 120, "height": 40}},
+    )
+
+    assert bets == {}
+
+
+def test_chipless_small_stack_far_from_bet_anchor_stays_rejected(monkeypatch) -> None:
+    monkeypatch.setattr(video_vision, "detect_red_chips", lambda _frame: [])
+    frame = np.zeros((736, 1120, 3), dtype=np.uint8)
+    seats = [{"name": f"seat_{index}"} for index in range(8)]
+    ocr = [
+        (
+            [[140, 580], [220, 580], [220, 608], [140, 608]],
+            "1 BB",
+            0.97,
+        )
+    ]
+
+    bets = video_vision.detect_bets(frame, seats, ocr)
+
+    assert bets == {}

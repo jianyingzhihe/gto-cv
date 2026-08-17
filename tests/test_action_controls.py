@@ -175,6 +175,52 @@ def test_check_bet_panel_does_not_invent_fold(monkeypatch) -> None:
     assert set(controls["actions"]) == {"check", "bet"}
 
 
+def test_three_button_panel_restores_fold_when_ocr_misses_left_label(monkeypatch) -> None:
+    monkeypatch.setattr(
+        video_vision,
+        "detect_bottom_action_buttons",
+        lambda _frame: [
+            {"x": 10, "y": 84, "width": 30, "height": 15, "area": 400.0},
+            {"x": 45, "y": 84, "width": 30, "height": 15, "area": 400.0},
+            {"x": 80, "y": 84, "width": 30, "height": 15, "area": 400.0},
+        ],
+    )
+    frame = np.zeros((100, 120, 3), dtype=np.uint8)
+    ocr = [
+        ([[49, 86], [70, 86], [70, 96], [49, 96]], "跟注 17.4BB", 0.96),
+        ([[84, 86], [106, 86], [106, 96], [84, 96]], "加注 34.8BB", 0.96),
+    ]
+
+    controls = video_vision.detect_action_controls(frame, ocr)
+
+    assert controls["visible"]
+    assert set(controls["actions"]) == {"fold", "call", "raise"}
+
+
+def test_truncated_call_decimal_is_inferred_from_paired_raise(monkeypatch) -> None:
+    monkeypatch.setattr(
+        video_vision,
+        "detect_bottom_action_buttons",
+        lambda _frame: [
+            {"x": 48, "y": 84, "width": 20, "height": 15, "area": 400.0},
+            {"x": 72, "y": 84, "width": 20, "height": 15, "area": 400.0},
+            {"x": 96, "y": 84, "width": 20, "height": 15, "area": 400.0},
+        ],
+    )
+    frame = np.zeros((100, 120, 3), dtype=np.uint8)
+    ocr = [
+        ([[75, 86], [89, 86], [89, 90], [75, 90]], "跟注", 0.96),
+        ([[75, 91], [91, 91], [91, 99], [75, 99]], "17.BB", 0.90),
+        ([[98, 86], [112, 86], [112, 90], [98, 90]], "加注", 0.96),
+        ([[100, 91], [118, 91], [118, 99], [100, 99]], "34.8BB", 0.94),
+    ]
+
+    controls = video_vision.detect_action_controls(frame, ocr)
+
+    assert controls["call_amount_bb"] == 17.4
+    assert controls["raise_amount_bb"] == 34.8
+
+
 def test_player_stack_without_a_chip_is_not_a_bet_even_after_bad_pot_ocr(monkeypatch) -> None:
     monkeypatch.setattr(video_vision, "detect_red_chips", lambda _frame: [])
     frame = np.zeros((1000, 1000, 3), dtype=np.uint8)

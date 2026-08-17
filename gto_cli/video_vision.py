@@ -475,11 +475,22 @@ def detect_bets(frame: Any, seats: list[dict[str, Any]], ocr_result: list[Any], 
         if is_ignored_bet_text(text, text_box, frame.shape, pot):
             continue
         chip = nearby_chip(text_box, chips)
-        if chip is None and is_player_stack_region(text_box, frame.shape, padding_x=0.0, padding_y=0.0):
-            continue
         text_seat_index, text_anchor_distance = nearest_bet_text_seat(text_box, frame.shape, len(seats))
         pot_amount = float(pot.get("amount_bb")) if pot and pot.get("amount_bb") is not None else None
+        raw_amount = amount
         amount = repair_bet_amount(amount, text, pot_amount)
+        close_blind_text = (
+            chip is None
+            and text_seat_index is not None
+            and raw_amount <= 2.05
+            and text_anchor_distance <= 72.0
+        )
+        if (
+            chip is None
+            and is_player_stack_region(text_box, frame.shape, padding_x=0.0, padding_y=0.0)
+            and not close_blind_text
+        ):
+            continue
         stack_sized = amount >= 20.0 if pot_amount is None else amount >= 20.0 and amount > max(20.0, pot_amount * 1.35)
         # 玩家筹码余量与真实红筹码可能处在同一横向区域。只要大额数字
         # 位于玩家面板，就不是桌面下注；小盲注仍需保留。
@@ -524,6 +535,7 @@ def detect_action_controls(frame: Any, ocr_result: list[Any]) -> dict[str, Any]:
     bottom_texts = []
     call_amounts = []
     raise_amounts = []
+    truncated_call_prefixes = []
     label_boxes: list[tuple[str, dict[str, int]]] = []
     for box, raw_text, raw_conf in ocr_result:
         text = normalize_ocr_text(str(raw_text))
@@ -539,7 +551,13 @@ def detect_action_controls(frame: Any, ocr_result: list[Any]) -> dict[str, Any]:
         amount = parse_bb_amount(text)
         # Player stacks also live near the lower edge of the table.  Amounts
         # above the button row must never be treated as CALL/RAISE amounts.
-        if amount is None or center_y < 0.90 * height:
+        if center_y < 0.90 * height:
+            continue
+        if amount is None:
+            if 0.58 * width <= center_x <= 0.84 * width:
+                truncated_prefix = parse_truncated_bb_prefix(text)
+                if truncated_prefix is not None:
+                    truncated_call_prefixes.append((float(raw_conf), truncated_prefix))
             continue
         if 0.58 * width <= center_x <= 0.84 * width:
             call_amounts.append((float(raw_conf), amount))
@@ -567,6 +585,18 @@ def detect_action_controls(frame: Any, ocr_result: list[Any]) -> dict[str, Any]:
         # button surface is visible rather than hiding an otherwise usable row.
         actions = sorted(detected_labels)
         disabled_actions = []
+    if (
+        "call" in actions
+        and "raise" in actions
+        and "fold" not in actions
+        and looks_like_three_action_button_panel(red_buttons)
+    ):
+        # OCR occasionally misses the left label while the three equal red
+        # surfaces are intact. This geometry is specific to FOLD/CALL/RAISE;
+        # the two-button CHECK/BET panel must never gain a synthetic fold.
+        actions = sorted({*actions, "fold"})
+    if "call" in actions and call_amount is None and raise_amount is not None:
+        call_amount = infer_truncated_call_amount(truncated_call_prefixes, raise_amount)
     # A bare number is not proof that Hero can act: it can be a stack, a
     # slider preset, or a cropped control from a neighbouring area.  Require
     # a detected button surface or an actual action label before reporting a
@@ -607,6 +637,43 @@ def label_box_overlaps_button(text_box: dict[str, int], buttons: list[dict[str, 
         if left <= center_x <= right and top <= center_y <= bottom:
             return True
     return False
+
+
+def looks_like_three_action_button_panel(buttons: list[dict[str, Any]]) -> bool:
+    if len(buttons) != 3:
+        return False
+    ordered = sorted(buttons, key=lambda item: float(item.get("x") or 0.0))
+    widths = [float(item.get("width") or 0.0) for item in ordered]
+    heights = [float(item.get("height") or 0.0) for item in ordered]
+    centers_y = [
+        float(item.get("y") or 0.0) + float(item.get("height") or 0.0) / 2.0
+        for item in ordered
+    ]
+    if min(widths, default=0.0) <= 0.0 or min(heights, default=0.0) <= 0.0:
+        return False
+    if max(widths) / min(widths) > 1.65 or max(heights) / min(heights) > 1.65:
+        return False
+    if max(centers_y) - min(centers_y) > max(heights) * 0.55:
+        return False
+    for left, right in zip(ordered, ordered[1:]):
+        left_edge = float(left.get("x") or 0.0) + float(left.get("width") or 0.0)
+        gap = float(right.get("x") or 0.0) - left_edge
+        if gap < -min(widths) * 0.15 or gap > max(widths) * 0.75:
+            return False
+    return True
+
+
+def infer_truncated_call_amount(
+    candidates: list[tuple[float, int]],
+    raise_amount: float,
+) -> float | None:
+    if not candidates or raise_amount <= 0.0:
+        return None
+    expected = float(raise_amount) / 2.0
+    _confidence, prefix = max(candidates, key=lambda item: item[0])
+    if int(math.floor(expected)) != int(prefix) or not 0.0 <= expected - float(prefix) < 1.0:
+        return None
+    return round(expected, 2)
 
 
 def action_label_from_text(text: str) -> str | None:
@@ -2487,13 +2554,16 @@ def clean_hero_suit_prediction(
     glyph = (
         normalized_hero_black_suit_component(crop, (42, 42))
         if is_black_pair
-        else normalized_suit_component_by_label(crop, (42, 42), source="hero")
+        else normalized_hero_red_suit_component(crop, (42, 42))
     )
+    used_red_component = not is_black_pair and glyph is not None
     if glyph is None:
         glyph = normalized_suit_component_by_label(crop, (42, 42), source="hero")
     prediction = classify_suit_glyph(glyph, allowed=allowed, model_path=model_path)
     if prediction is not None and is_black_pair:
         prediction = {**prediction, "hero_black_component": True}
+    elif prediction is not None and used_red_component:
+        prediction = {**prediction, "hero_red_component": True}
     return prediction
 
 
@@ -2536,6 +2606,8 @@ def clean_hero_suit_prediction_is_decisive(
         return False
     if set(allowed or ()) == {"s", "c"} and prediction.get("hero_black_component"):
         return float(prediction.get("score") or 0.0) >= 0.90 and float(prediction.get("margin") or 0.0) >= 0.02
+    if set(allowed or ()) == {"h", "d"} and prediction.get("hero_red_component"):
+        return float(prediction.get("score") or 0.0) >= 0.84 and float(prediction.get("margin") or 0.0) >= 0.04
     min_margin = 0.04 if set(allowed or ()) == {"s", "c"} else 0.06
     return float(prediction.get("score") or 0.0) >= 0.92 and float(prediction.get("margin") or 0.0) >= min_margin
 
@@ -2647,6 +2719,11 @@ def card_recognition_cache_key(crop: Any, *, kind: str, source: str, index: int)
         int(width),
         digest,
         os.environ.get("GTO_CARD_KNN_MODEL") or "",
+        os.environ.get("GTO_CARD_BOARD_KNN_MODEL") or "",
+        os.environ.get("GTO_CARD_HERO_RANK_MODEL") or "",
+        os.environ.get("GTO_CARD_HERO_SUIT_MODEL") or "",
+        os.environ.get("GTO_CARD_HERO_BLACK_SUIT_MODEL") or "",
+        os.environ.get("GTO_CARD_BOARD_BLACK_SUIT_MODEL") or "",
         os.environ.get("GTO_CARD_DEEP_MODEL_DIR") or "",
     )
 
@@ -2918,6 +2995,42 @@ def normalized_hero_suit_window(crop: Any, size: tuple[int, int]) -> Any | None:
         return None
     _distance, component = min(candidates, key=lambda item: item[0])
     component_mask = (labels == component).astype("uint8") * 255
+    return normalized_mask_piece(component_mask, size)
+
+
+def normalized_hero_red_suit_component(crop: Any, size: tuple[int, int]) -> Any | None:
+    if card_glyph_color(crop) != "red":
+        return None
+    cv2, np = load_cv()
+    y1 = min(crop.shape[0], 52)
+    y2 = min(crop.shape[0], 106)
+    x1 = min(crop.shape[1], 4)
+    x2 = min(crop.shape[1], 56)
+    if y2 - y1 < 30 or x2 - x1 < 28:
+        return None
+    piece = crop[y1:y2, x1:x2]
+    hsv = cv2.cvtColor(piece, cv2.COLOR_BGR2HSV)
+    mask = (
+        cv2.inRange(hsv, (0, 70, 55), (15, 255, 255))
+        | cv2.inRange(hsv, (165, 70, 55), (180, 255, 255))
+    )
+    component_count, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, 8)
+    candidates = []
+    for component in range(1, component_count):
+        x, y, width, height, area = [int(value) for value in stats[component]]
+        cx, cy = centroids[component]
+        if area < 55 or area > 520:
+            continue
+        if width < 7 or height < 8 or width > 32 or height > 34:
+            continue
+        if x <= 1 or x + width >= piece.shape[1] - 1:
+            continue
+        distance = abs(float(cx) - 24.0) + abs(float(cy) - 24.0) * 0.75
+        candidates.append((distance, -area, component))
+    if not candidates:
+        return None
+    _distance, _negative_area, component = min(candidates)
+    component_mask = (labels == component).astype(np.uint8) * 255
     return normalized_mask_piece(component_mask, size)
 
 
@@ -3289,6 +3402,14 @@ def parse_bb_amount(text: str) -> float | None:
         return float(match.group(1))
     except ValueError:
         return None
+
+
+def parse_truncated_bb_prefix(text: str) -> int | None:
+    compact = text.replace(" ", "")
+    match = re.search(r"(\d+)\.B{1,2}", compact, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1))
 
 
 def repair_bet_amount(amount: float, text: str, pot_amount: float | None) -> float:

@@ -35,6 +35,8 @@ pict/card_models/*
 !pict/card_models/card_glyph_suit_knn.npz
 !pict/card_models/card_glyph_hero_black_suit_knn.npz
 !pict/card_models/card_glyph_board_black_suit_knn.npz
+!pict/card_training_regressions/
+!pict/card_training_regressions/**
 
 # Local credentials and editor files
 .env
