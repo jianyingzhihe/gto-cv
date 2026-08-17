@@ -213,6 +213,15 @@ python -c "from rapidocr_onnxruntime import RapidOCR; print('OCR OK')"
 
 `events.jsonl` 是历史事件流：每一行是一份完整 JSON 状态。适合后续做视频回放、统计或状态机，不要把它当普通 CSV 读取。
 
+实时程序每次启动还会把同样的逐帧状态写入独立的永久记录：
+
+```text
+video_frames\screen_live\history\events_启动时间.jsonl
+video_frames\screen_live\history\summary_启动时间.json
+```
+
+根目录的 `events.jsonl` 仍表示最近一次运行，供现有审核工具读取；`history` 目录不会在下次启动时被覆盖。每条事件含 `recording.session_id`，并保留座位、可见下注、操作按钮、置信度、翻前跟踪结果和建议。`state_audit` 还会为有意义的牌桌状态变化保存一次完整人工大框截图，供以后重建完整行动历史或重新运行改进后的识别逻辑。
+
 ## 6. 覆盖层和异常保存接口
 
 | 路径 | 内容 | 何时看 |

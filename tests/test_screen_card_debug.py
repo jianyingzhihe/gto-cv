@@ -149,6 +149,22 @@ class ScreenCardDebugTest(unittest.TestCase):
         state["action_controls"]["call_amount_bb"] = 5.6
         self.assertNotEqual(first, state_audit_signature(state))
 
+    def test_state_audit_keeps_passive_betting_transitions(self) -> None:
+        state = {
+            "ok": True,
+            "table": {"street": "preflop", "dealer_seat": "top", "pot_bb": 3.4, "board": []},
+            "hero": {"position": "HJ", "cards": ["Ah", "6s"], "is_turn": False},
+            "action_controls": {"visible": False, "actions": []},
+            "bets": [{"seat": "left", "amount_bb": 2.0}],
+            "seats": [{"seat": "left", "position": "UTG", "status": "active", "bet_bb": 2.0}],
+        }
+
+        self.assertEqual(state_audit_reason(state), "table_state_change")
+        first = state_audit_signature(state)
+        state["bets"][0]["amount_bb"] = 5.6
+        state["seats"][0]["bet_bb"] = 5.6
+        self.assertNotEqual(first, state_audit_signature(state))
+
     def test_card_sample_manifest_is_glyph_queue_compatible(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

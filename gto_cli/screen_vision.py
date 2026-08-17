@@ -138,7 +138,8 @@ def analyze_screen_stream(
     import mss
 
     started_at = time.perf_counter()
-    card_sample_session_id = time.strftime("%Y%m%d_%H%M%S")
+    session_id = time.strftime("%Y%m%d_%H%M%S") + f"_{time.time_ns() % 1_000_000:06d}"
+    session_started_local = time.strftime("%Y-%m-%dT%H:%M:%S%z")
     output_dir = Path(output_dir)
     frames_dir = output_dir / "event_frames"
     annotated_dir = output_dir / "event_annotated"
@@ -146,6 +147,7 @@ def analyze_screen_stream(
     card_debug_dir = output_dir / "card_debug"
     card_samples_dir = output_dir / "card_samples"
     state_audit_dir = output_dir / "state_audit"
+    history_dir = output_dir / "history"
     card_samples_csv_path = card_samples_dir / "glyph_predictions.csv"
     card_sample_queue_dir = output_dir / "card_sample_label_queue"
     card_sample_prepare_command_path = output_dir / "run_prepare_card_sample_labels_command.txt"
@@ -185,8 +187,11 @@ def analyze_screen_stream(
         card_sample_apply_command_path.write_text(apply_command + "\n", encoding="utf-8-sig")
     if record_live_state_audits:
         state_audit_dir.mkdir(parents=True, exist_ok=True)
+        history_dir.mkdir(parents=True, exist_ok=True)
 
     jsonl_path = output_dir / "events.jsonl"
+    history_jsonl_path = history_dir / f"events_{session_id}.jsonl"
+    history_summary_path = history_dir / f"summary_{session_id}.json"
     events_path = output_dir / "events.json"
     current_path = output_dir / "current_state.json"
     summary_path = output_dir / "screen_summary.json"
@@ -559,6 +564,7 @@ def analyze_screen_stream(
         if print_events:
             bbox_text = f'{region["left"]},{region["top"]},{region["width"]},{region["height"]}'
             print(f"Screen CV live started: bbox={bbox_text} current_state={current_path}", flush=True)
+            print(f"Persistent history: {history_jsonl_path}", flush=True)
             if auto_bbox_info:
                 print(
                     f"Auto bbox: method={auto_bbox_info.get('method')} score={auto_bbox_info.get('score')} "
@@ -591,7 +597,10 @@ def analyze_screen_stream(
                 )
             print("Press Ctrl+C to stop.", flush=True)
         try:
-            with jsonl_path.open("w", encoding="utf-8", newline="\n") as stream:
+            with (
+                jsonl_path.open("w", encoding="utf-8", newline="\n") as stream,
+                history_jsonl_path.open("w", encoding="utf-8", newline="\n") as history_stream,
+            ):
                 while deadline is None or time.perf_counter() <= deadline:
                     loop_started = time.perf_counter()
                     timestamp = loop_started - started_at
@@ -917,7 +926,7 @@ def analyze_screen_stream(
                     if should_emit:
                         artifact_started = time.perf_counter()
                         event_index = emitted_events
-                        basename = f"event_{event_index:04d}_{timestamp:08.3f}s".replace(".", "p")
+                        basename = f"event_{session_id}_{event_index:04d}_{timestamp:08.3f}s".replace(".", "p")
                         event_frame_path = ""
                         annotated_path = ""
                         if save_frames:
@@ -978,7 +987,7 @@ def analyze_screen_stream(
                             )
                             if should_save_card_sample and saved_card_samples < max(0, int(card_sample_limit)):
                                 sample_basename = (
-                                    f"sample_{card_sample_session_id}_{saved_card_samples:04d}_{timestamp:08.3f}s"
+                                    f"sample_{session_id}_{saved_card_samples:04d}_{timestamp:08.3f}s"
                                 ).replace(".", "p")
                                 if diagnostic is None:
                                     diagnostic = render_diagnostic_frame(
@@ -1048,8 +1057,17 @@ def analyze_screen_stream(
                             "reason": reason,
                             "signature": signature,
                         }
-                        stream.write(json.dumps(state, ensure_ascii=False, separators=(",", ":")) + "\n")
+                        state["recording"] = {
+                            "session_id": session_id,
+                            "session_started_local": session_started_local,
+                            "elapsed_sec": round(float(timestamp), 3),
+                            "processed_frame_index": processed_frames - 1,
+                        }
+                        serialized_state = json.dumps(state, ensure_ascii=False, separators=(",", ":")) + "\n"
+                        stream.write(serialized_state)
                         stream.flush()
+                        history_stream.write(serialized_state)
+                        history_stream.flush()
                         current_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
                         events.append(state)
                         emitted_events += 1
@@ -1090,6 +1108,10 @@ def analyze_screen_stream(
         "auto_bbox": auto_bbox_info,
         "template": str(template_path),
         "output_dir": str(output_dir),
+        "recording": {
+            "session_id": session_id,
+            "session_started_local": session_started_local,
+        },
         "trigger": trigger,
         "console_mode": console_mode,
         "console_heartbeat_sec": console_heartbeat_sec,
@@ -1131,6 +1153,8 @@ def analyze_screen_stream(
         "timing": event_source_timing_summary(events),
         "files": {
             "events_jsonl": str(jsonl_path),
+            "history_events_jsonl": str(history_jsonl_path),
+            "history_summary": str(history_summary_path),
             "events_json": str(events_path),
             "current_state": str(current_path),
             "summary": str(summary_path),
@@ -1149,6 +1173,7 @@ def analyze_screen_stream(
         "events": events,
     }
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    history_summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     if not current_path.exists():
         current_path.write_text(json.dumps({"ok": False, "error": "no events emitted"}, indent=2), encoding="utf-8")
     return summary
@@ -1290,7 +1315,23 @@ def state_audit_reason(state: dict[str, Any]) -> str | None:
         return reason
     if controls.get("visible"):
         return "hero_action_controls_visible"
+    if state.get("ok") and meaningful_table_observation(state):
+        return "table_state_change"
     return None
+
+
+def meaningful_table_observation(state: dict[str, Any]) -> bool:
+    """Keep passive evidence that can later reconstruct betting history."""
+
+    table = state.get("table") or {}
+    hero = state.get("hero") or {}
+    return bool(
+        table.get("dealer_seat")
+        or table.get("pot_bb") is not None
+        or table.get("board")
+        or hero.get("cards")
+        or state.get("bets")
+    )
 
 
 def state_audit_signature(state: dict[str, Any]) -> str:
@@ -1310,11 +1351,27 @@ def state_audit_signature(state: dict[str, Any]) -> str:
         for item in list(state.get("bets") or [])
         if isinstance(item, dict)
     ]
+    seat_observations = [
+        {
+            "seat": item.get("seat"),
+            "position": item.get("position"),
+            "status": item.get("status"),
+            "has_cards": item.get("has_cards"),
+            "bet_bb": item.get("bet_bb"),
+            "stack_bb": item.get("stack_bb"),
+        }
+        for item in list(state.get("seats") or [])
+        if isinstance(item, dict)
+    ]
     payload = {
         "street": table.get("street"),
         "dealer": table.get("dealer_seat"),
+        "pot_bb": table.get("pot_bb"),
+        "board": list(table.get("board") or []),
         "hero_position": hero.get("position"),
         "hero_cards": list(hero.get("cards") or []),
+        "hero_status": hero.get("status"),
+        "hero_bet_bb": hero.get("bet_bb"),
         "hero_turn": bool(hero.get("is_turn")),
         "actions": list(controls.get("actions") or []),
         "call_amount_bb": controls.get("call_amount_bb"),
@@ -1324,6 +1381,7 @@ def state_audit_signature(state: dict[str, Any]) -> str:
         "tracker_reason": tracker.get("reason"),
         "preflop_history": list(preflop.get("action_history") or []),
         "visible_bets": visible_bets,
+        "seats": seat_observations,
     }
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
