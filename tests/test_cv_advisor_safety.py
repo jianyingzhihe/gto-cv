@@ -3,6 +3,7 @@ from __future__ import annotations
 from gto_cli import cv_advisor
 from gto_cli.cv_advisor import (
     action_to_call,
+    available_action_mix,
     build_gto_advice,
     build_size_mix,
     format_advice_summary,
@@ -140,6 +141,44 @@ def test_weighted_random_action_uses_all_positive_weights() -> None:
     assert weighted_random_action(mix, 0.69) == "call"
     assert weighted_random_action(mix, 0.70) == "raise"
     assert weighted_random_action(mix, 0.99) == "raise"
+
+
+def test_unavailable_mixed_action_is_filtered_and_remaining_weights_are_normalized() -> None:
+    available, excluded = available_action_mix(
+        {"raise": 40.0, "call": 55.0, "fold": 5.0},
+        {"call", "fold"},
+    )
+
+    assert available == {"call": 91.6667, "fold": 8.3333}
+    assert excluded == ["raise"]
+
+
+def test_all_in_call_fold_panel_samples_only_visible_actions(monkeypatch) -> None:
+    state = postflop_state(pot_bb=51.6)
+    state["action_controls"] = {"visible": True, "actions": ["call", "fold"]}
+    state["table"]["to_call_bb"] = 6.1
+    monkeypatch.setattr(cv_advisor, "stable_random_value", lambda _context: 0.50)
+    monkeypatch.setattr(
+        cv_advisor,
+        "advise_state",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "mode": "postflop",
+            "decision": {
+                "primary_action": "call",
+                "mix": {"raise": 40.0, "call": 55.0, "fold": 5.0},
+                "recommended_size_bb": None,
+                "confidence": "high",
+            },
+        },
+    )
+
+    advice = build_gto_advice(state, effective_stack_bb=100)
+
+    assert advice["ready"]
+    assert advice["action"] == "call"
+    assert advice["available_mix"] == {"call": 91.6667, "fold": 8.3333}
+    assert advice["selection"]["excluded_unavailable_actions"] == ["raise"]
 
 
 def test_gto_advice_uses_weighted_sample_and_keeps_it_stable(monkeypatch) -> None:

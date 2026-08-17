@@ -67,6 +67,8 @@ def build_gto_advice(
             board=board,
             summary="WAIT: community cards are still being dealt; wait for a stable board before advising.",
         )
+    if len(board) not in {0, 3, 4, 5}:
+        return not_ready("board_cards_incomplete", board=board)
     if board and not complete_cards(board, expected=len(board)):
         return not_ready("board_cards_incomplete", board=board)
 
@@ -132,35 +134,22 @@ def build_gto_advice(
                 else "WAIT: preflop action history is required before GTO can classify RFI/vs-open/vs-3bet."
             ),
         )
-    visible_primary = strategy_action_to_visible_action(primary)
-    if visible_primary not in actions:
-        return not_ready(
-            "advice_action_not_available",
-            action=primary,
-            required_visible_action=visible_primary,
-            actions=sorted(actions),
-            input=advisor_state,
-            result=result,
-            summary="WAIT: the strategy action is not available in the visible Hero controls.",
-        )
-    unavailable_mix = sorted(
-        {
-            strategy_action_to_visible_action(action)
-            for action, frequency in (decision.get("mix") or {}).items()
-            if as_float(frequency, 0.0) > 0
-            and strategy_action_to_visible_action(action) not in actions
-        }
-    )
-    if unavailable_mix:
-        return not_ready(
-            "advice_action_space_mismatch",
-            action=primary,
-            unavailable_actions=unavailable_mix,
-            actions=sorted(actions),
-            input=advisor_state,
-            result=result,
-            summary="WAIT: the strategy action space does not match the visible Hero controls.",
-        )
+    model_primary = primary
+    action_mix = decision.get("mix") or {}
+    available_mix, unavailable_mix = available_action_mix(action_mix, actions)
+    if not available_mix:
+        visible_primary = strategy_action_to_visible_action(primary)
+        if visible_primary not in actions:
+            return not_ready(
+                "advice_action_not_available",
+                action=primary,
+                required_visible_action=visible_primary,
+                actions=sorted(actions),
+                input=advisor_state,
+                result=result,
+                summary="WAIT: the strategy has no action available in the visible Hero controls.",
+            )
+        available_mix = {str(primary): 100.0}
     size_mix = build_size_mix(
         decision=decision,
         result=result,
@@ -168,18 +157,16 @@ def build_gto_advice(
         to_call_bb=to_call_bb,
         effective_stack_bb=effective_stack_bb,
     )
-    model_primary = primary
-    action_mix = decision.get("mix") or {}
     selection_context = {
         "hero": advisor_state.get("hero"),
         "table": advisor_state.get("table"),
         "action": advisor_state.get("action"),
         "preflop": advisor_state.get("preflop"),
         "visible_actions": sorted(actions),
-        "mix": action_mix,
+        "mix": available_mix,
     }
     random_value = stable_random_value(selection_context)
-    sampled_action = weighted_random_action(action_mix, random_value)
+    sampled_action = weighted_random_action(available_mix, random_value)
     if sampled_action:
         primary = sampled_action
     amount = recommended_amount_bb(primary, decision, to_call_bb, size_mix=size_mix)
@@ -187,8 +174,10 @@ def build_gto_advice(
         "method": "weighted_random" if sampled_action else "model_primary_no_positive_mix",
         "roll_pct": round(random_value * 100.0, 4),
         "selected_action": primary,
-        "selected_weight": as_float(action_mix.get(primary), 0.0),
-        "weights": {str(action): as_float(weight, 0.0) for action, weight in action_mix.items()},
+        "selected_weight": as_float(available_mix.get(primary), 0.0),
+        "weights": available_mix,
+        "model_weights": {str(action): as_float(weight, 0.0) for action, weight in action_mix.items()},
+        "excluded_unavailable_actions": unavailable_mix,
     }
     return {
         "ready": True,
@@ -200,13 +189,14 @@ def build_gto_advice(
         "amount_bb": amount,
         "target_bet_bb": amount,
         "mix": decision.get("mix") or {},
+        "available_mix": available_mix,
         "size_mix": size_mix,
         "confidence": decision.get("confidence"),
         "scenario": preflop_context.get("scenario"),
         "preflop_context": preflop_context,
         "input": advisor_state,
         "result": result,
-        "summary": format_advice_summary(primary, amount, decision.get("mix") or {}, size_mix),
+        "summary": format_advice_summary(primary, amount, available_mix, size_mix),
     }
 
 
@@ -278,6 +268,35 @@ def weighted_random_action(action_mix: dict[str, Any], random_value: float) -> s
         if threshold < cumulative:
             return action
     return choices[-1][0]
+
+
+def available_action_mix(
+    action_mix: dict[str, Any],
+    visible_actions: set[str],
+) -> tuple[dict[str, float], list[str]]:
+    """Keep strategy actions that have a clickable client button and renormalize them."""
+
+    available: dict[str, float] = {}
+    unavailable: set[str] = set()
+    for action, raw_weight in action_mix.items():
+        weight = max(0.0, as_float(raw_weight, 0.0))
+        if weight <= 0:
+            continue
+        visible_action = strategy_action_to_visible_action(action)
+        if visible_action not in visible_actions:
+            unavailable.add(visible_action)
+            continue
+        normalized_action = str(action)
+        available[normalized_action] = available.get(normalized_action, 0.0) + weight
+
+    total_weight = sum(available.values())
+    if total_weight <= 0:
+        return {}, sorted(unavailable)
+    normalized = {
+        action: round(weight * 100.0 / total_weight, 4)
+        for action, weight in available.items()
+    }
+    return normalized, sorted(unavailable)
 
 
 def stable_random_value(context: dict[str, Any]) -> float:

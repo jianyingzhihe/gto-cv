@@ -1,7 +1,7 @@
 import numpy as np
 
 from gto_cli import video_vision
-from gto_cli.video_vision import nearest_bet_text_seat
+from gto_cli.video_vision import nearest_bet_text_seat, repair_bet_amount
 
 
 def test_current_wpt_blind_texts_map_to_their_physical_seats() -> None:
@@ -22,6 +22,22 @@ def test_distant_edge_text_is_not_assigned_as_a_bet() -> None:
 
     assert seat_index is None
     assert distance > 92
+
+
+def test_scaled_live_bet_texts_keep_their_seat_assignment() -> None:
+    shape = (1140, 1652, 3)
+
+    top_right = nearest_bet_text_seat({"x": 1151, "y": 411, "width": 149, "height": 53}, shape, 8)
+    right = nearest_bet_text_seat({"x": 1216, "y": 571, "width": 150, "height": 55}, shape, 8)
+
+    assert top_right[0] == 5
+    assert right[0] == 6
+
+
+def test_chip_glyph_prefix_is_removed_only_when_amount_exceeds_pot() -> None:
+    assert repair_bet_amount(91.0, "91 BB", 5.4) == 1.0
+    assert repair_bet_amount(80.4, "80.4 BB", 5.4) == 0.4
+    assert repair_bet_amount(4.8, "4.8 BB", 8.2) == 4.8
 
 
 def test_chip_near_text_cannot_override_the_text_seat(monkeypatch) -> None:

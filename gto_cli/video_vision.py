@@ -475,11 +475,12 @@ def detect_bets(frame: Any, seats: list[dict[str, Any]], ocr_result: list[Any], 
         if is_ignored_bet_text(text, text_box, frame.shape, pot):
             continue
         chip = nearby_chip(text_box, chips)
-        text_seat_index, text_anchor_distance = nearest_bet_text_seat(text_box, frame.shape, len(seats))
-        pot_amount = float(pot.get("amount_bb")) if pot and pot.get("amount_bb") is not None else None
-        stack_sized = amount >= 20.0 if pot_amount is None else amount >= 20.0 and amount > max(20.0, pot_amount * 1.35)
         if chip is None and is_player_stack_region(text_box, frame.shape, padding_x=0.0, padding_y=0.0):
             continue
+        text_seat_index, text_anchor_distance = nearest_bet_text_seat(text_box, frame.shape, len(seats))
+        pot_amount = float(pot.get("amount_bb")) if pot and pot.get("amount_bb") is not None else None
+        amount = repair_bet_amount(amount, text, pot_amount)
+        stack_sized = amount >= 20.0 if pot_amount is None else amount >= 20.0 and amount > max(20.0, pot_amount * 1.35)
         # 玩家筹码余量与真实红筹码可能处在同一横向区域。只要大额数字
         # 位于玩家面板，就不是桌面下注；小盲注仍需保留。
         if stack_sized and is_player_stack_region(text_box, frame.shape):
@@ -2430,13 +2431,31 @@ def recognize_card_suit(
         )
         if diamond_override is not None:
             margin, best_score, suit, second_score = diamond_override
+    if (
+        source == "hero"
+        and color == "black"
+        and clean_prediction is not None
+        and str(clean_prediction.get("label") or "") in allowed
+        and float(clean_prediction.get("score") or 0.0) >= 0.65
+        and float(clean_prediction.get("margin") or 0.0) >= 0.02
+        and margin < 0.03
+    ):
+        return store_suit_recognition_cache(
+            cache_key,
+            (
+                str(clean_prediction["label"]),
+                float(clean_prediction["score"]),
+                float(clean_prediction["margin"]),
+                color,
+            ),
+        )
     min_score = 0.15 if source == "board" else 0.22
     if source == "board":
         min_margin = 0.0 if best_score >= 0.42 else 0.03
     else:
         min_margin = 0.05 if best_score >= 0.72 else 0.08
     if best_score < min_score or margin < min_margin:
-        relaxed_red = source == "hero" and color == "red" and best_score >= 0.40 and margin >= 0.035
+        relaxed_red = source == "hero" and color == "red" and best_score >= 0.40 and margin >= 0.030
         relaxed_black = source == "hero" and color == "black" and best_score >= 0.80 and margin >= 0.020
         if not (relaxed_red or relaxed_black):
             return store_suit_recognition_cache(cache_key, (None, best_score, margin, color))
@@ -3252,7 +3271,7 @@ def nearest_bet_text_seat(text_box: dict[str, int], shape: tuple[int, ...], seat
     anchor_x = BET_TEXT_ANCHORS_8[seat_index][0] * width
     anchor_y = BET_TEXT_ANCHORS_8[seat_index][1] * height
     distance = math.hypot(center_x - anchor_x, center_y - anchor_y)
-    if distance > max(84.0, 0.125 * min(width, height)):
+    if distance > max(84.0, 0.15 * min(width, height)):
         return None, distance
     return seat_index, distance
 
@@ -3270,6 +3289,32 @@ def parse_bb_amount(text: str) -> float | None:
         return float(match.group(1))
     except ValueError:
         return None
+
+
+def repair_bet_amount(amount: float, text: str, pot_amount: float | None) -> float:
+    """Remove a chip glyph that OCR merged into the front of a bet amount."""
+
+    if pot_amount is None or amount <= pot_amount + 0.15:
+        return amount
+    compact = text.replace(" ", "")
+    match = re.search(r"(\d+(?:\.\d+)?)\s*B{1,2}", compact, flags=re.IGNORECASE)
+    if not match:
+        return amount
+    token = match.group(1)
+    candidates: list[tuple[int, int, float]] = []
+    for start in range(1, len(token)):
+        suffix = token[start:]
+        if suffix.startswith("."):
+            suffix = f"0{suffix}"
+        try:
+            candidate = float(suffix)
+        except ValueError:
+            continue
+        if 0.0 < candidate <= pot_amount + 0.15:
+            candidates.append((1 if "." in suffix else 0, len(suffix), candidate))
+    if not candidates:
+        return amount
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
 def is_ignored_bb_text(text: str, box: dict[str, int], shape: tuple[int, ...]) -> bool:
@@ -3293,7 +3338,7 @@ def is_ignored_bet_text(text: str, box: dict[str, int], shape: tuple[int, ...], 
     compact = text.replace(" ", "")
     if "\u5e95\u6c60" in text or "\u6c60" in text or "ЕзГи" in text or "Ги" in text:
         return True
-    if pot and boxes_overlap(box, pot.get("box") or {}, padding=12):
+    if pot and boxes_overlap(box, pot.get("box") or {}, padding=4):
         return True
     if center_y > 0.84 * height:
         return True

@@ -32,3 +32,17 @@ def test_postflop_buttons_with_empty_board_are_treated_as_board_dealing() -> Non
     assert state["table"]["street"] == "flop"
     assert state["table"]["board_pending"] is True
     assert build_gto_advice(state)["reason"] == "board_cards_incomplete"
+
+
+def test_partial_flop_never_reaches_the_advisor() -> None:
+    state = {
+        "ok": True,
+        "hero_turn": {"is_turn": True},
+        "action_controls": {"visible": True, "actions": ["fold", "call", "raise"]},
+        "hero": {"cards": ["7c", "4d"], "position": "LJ", "gto_position": "HJ"},
+        "table": {"street": "preflop", "pot_bb": 3.4, "to_call_bb": 2.0, "board": ["Ts"]},
+    }
+
+    advice = build_gto_advice(state)
+
+    assert advice["reason"] == "board_cards_incomplete"
