@@ -20,6 +20,7 @@ POSITION_ORDER_BY_SEATS = {
 GTO_POSITIONS = {"UTG", "HJ", "CO", "BTN", "SB", "BB"}
 GTO_POSITION_ALIASES = {
     "BTN/SB": "SB",
+    "THIRD_BLIND": "BB",
     "UTG+1": "UTG",
     "UTG+2": "UTG",
     "MP": "UTG",

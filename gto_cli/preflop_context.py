@@ -7,6 +7,7 @@ from .strategy import normalize_scenario
 
 POSITION_BUCKETS = {
     "BTN/SB": "SB",
+    "THIRD_BLIND": "BB",
     "UTG+1": "UTG",
     "UTG+2": "UTG",
     "MP": "UTG",

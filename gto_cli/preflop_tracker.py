@@ -167,7 +167,7 @@ class PreflopActionTracker:
         current_statuses = seat_statuses(state)
         if self._record_all_in_raise_from_pot_change(state, seats):
             return
-        raise_to = largest_raise_to(self._history)
+        raise_to = largest_raise_to(self._history, opening_floor(blind_sizes(state)))
         raise_count = raise_events(self._history)
         changed: list[tuple[int, dict[str, Any], float, float]] = []
         for seat in seats:
@@ -226,7 +226,7 @@ class PreflopActionTracker:
         ):
             return False
 
-        prior_raise_to = largest_raise_to(self._history or [])
+        prior_raise_to = largest_raise_to(self._history or [], opening_floor(blind_sizes(state)))
         raise_to = hero_bet + call_amount
         if raise_to <= prior_raise_to + EPSILON_BB:
             return False
@@ -326,6 +326,8 @@ def infer_visible_prehero_history_with_reason(state: dict[str, Any]) -> tuple[li
     sizes = blind_sizes(state)
     hero_bet = number_or_none(hero.get("bet_bb")) or 0.0
     hero_post = blind_post(hero, sizes)
+    if str(hero.get("position") or "") == "THIRD_BLIND":
+        return None, "three_blind_option_not_supported"
     if hero_bet > hero_post + EPSILON_BB:
         reconstructed = infer_utg_open_after_later_raises(state, sizes, hero_bet)
         if reconstructed is not None:
@@ -339,7 +341,7 @@ def infer_visible_prehero_history_with_reason(state: dict[str, Any]) -> tuple[li
             return None, "blind_posts_unconfirmed"
 
     history: list[dict[str, Any]] = []
-    raise_to = sizes["bb"]
+    raise_to = opening_floor(sizes)
     raise_count = 0
     pot_confirms_all_visible_contributions = visible_preflop_contributions_match_pot(
         state,
@@ -389,7 +391,7 @@ def infer_utg_open_after_later_raises(
     hero = as_dict(state.get("hero"))
     if int_or_none(hero.get("preflop_action_order")) != 1:
         return None
-    if hero_bet <= sizes["bb"] + EPSILON_BB:
+    if hero_bet <= opening_floor(sizes) + EPSILON_BB:
         return None
     if not blind_posts_present_in_raised_pot(state, sizes):
         return None
@@ -471,7 +473,7 @@ def infer_cold_call_facing_later_raise(
 
     hero_seat = str(hero.get("seat") or "")
     history: list[dict[str, Any]] = []
-    raise_to = sizes["bb"]
+    raise_to = opening_floor(sizes)
     raise_count = 0
     hero_called = False
     later_raise_seen = False
@@ -518,9 +520,9 @@ def blind_posts_present_in_raised_pot(state: dict[str, Any], sizes: dict[str, fl
     """Accept blind seats that have later called or raised, not only exact blind chips."""
 
     by_position = {str(seat.get("position") or ""): seat for seat in ordered_seats(state)}
-    for position in ("SB", "BB"):
+    for position, minimum in forced_blind_posts(sizes).items():
         amount = number_or_none(as_dict(by_position.get(position)).get("bet_bb"))
-        if amount is None or amount + EPSILON_BB < sizes[position.lower()]:
+        if amount is None or amount + EPSILON_BB < minimum:
             return False
     return True
 
@@ -545,10 +547,11 @@ def visible_preflop_contributions_match_pot(
     )
     if include_missing_blinds:
         sizes = blind_sizes(state)
+        forced_posts = forced_blind_posts(sizes)
         for seat in ordered_seats(state):
             position = str(seat.get("position") or "")
-            if position in {"SB", "BB"} and number_or_none(seat.get("bet_bb")) is None:
-                visible_total += sizes[position.lower()]
+            if position in forced_posts and number_or_none(seat.get("bet_bb")) is None:
+                visible_total += forced_posts[position]
     return abs(pot_bb - visible_total) <= EPSILON_BB
 
 
@@ -631,7 +634,13 @@ def blind_sizes(state: dict[str, Any]) -> dict[str, float]:
     bb = next((number_or_none(seat.get("bet_bb")) for seat in seats if seat.get("position") == "BB"), None)
     bb_value = bb if bb is not None and 0.5 <= bb <= 1.5 else 1.0
     sb_value = sb if sb is not None and 0 < sb <= bb_value else 0.4
-    return {"sb": round(sb_value, 2), "bb": round(bb_value, 2)}
+    sizes = {"sb": round(sb_value, 2), "bb": round(bb_value, 2)}
+    structure = as_dict(as_dict(state.get("table")).get("blind_structure"))
+    posts = as_dict(structure.get("posts_bb"))
+    third = number_or_none(posts.get("THIRD_BLIND"))
+    if structure.get("kind") == "three_blind" and third is not None and third > bb_value + EPSILON_BB:
+        sizes["third_blind"] = round(third, 2)
+    return sizes
 
 
 def blind_post(seat: dict[str, Any], sizes: dict[str, float]) -> float:
@@ -640,6 +649,8 @@ def blind_post(seat: dict[str, Any], sizes: dict[str, float]) -> float:
         return sizes["sb"]
     if position == "BB":
         return sizes["bb"]
+    if position == "THIRD_BLIND":
+        return sizes.get("third_blind", 0.0)
     return 0.0
 
 
@@ -654,16 +665,21 @@ def blind_posts_confirmed(state: dict[str, Any], sizes: dict[str, float]) -> boo
     seats = [as_dict(seat) for seat in list(state.get("seats") or [])]
     by_position = {str(seat.get("position") or ""): seat for seat in seats}
     hero_position = str(as_dict(state.get("hero")).get("position") or "")
+    forced_posts = forced_blind_posts(sizes)
+    if all(amount_matches(by_position.get(position), expected) for position, expected in forced_posts.items()):
+        return True
     bb = by_position.get("BB")
     if amount_matches(bb, sizes["bb"]):
-        if hero_position == "BB" or amount_matches(by_position.get("SB"), sizes["sb"]):
+        if "third_blind" not in sizes and (
+            hero_position == "BB" or amount_matches(by_position.get("SB"), sizes["sb"])
+        ):
             return True
     if hero_position == "BB":
         return False
 
     # A forced blind can briefly disappear under an animation. Accept the
     # omission only when the trusted pot closes the exact missing-blind gap.
-    for position, expected in (("SB", sizes["sb"]), ("BB", sizes["bb"])):
+    for position, expected in forced_posts.items():
         observed = number_or_none(as_dict(by_position.get(position)).get("bet_bb"))
         if observed is not None and abs(observed - expected) > EPSILON_BB:
             return False
@@ -679,6 +695,8 @@ def missing_big_blind_is_safely_implied(state: dict[str, Any], hero_order: int, 
     merely because the 1 BB chip was not assigned to the BB seat in this frame.
     """
 
+    if "third_blind" in sizes:
+        return False
     hero = as_dict(state.get("hero"))
     if str(hero.get("position") or "") == "BB":
         return False
@@ -747,10 +765,21 @@ def seat_statuses(state: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def largest_raise_to(history: list[dict[str, Any]]) -> float:
+def forced_blind_posts(sizes: dict[str, float]) -> dict[str, float]:
+    posts = {"SB": sizes["sb"], "BB": sizes["bb"]}
+    if "third_blind" in sizes:
+        posts["THIRD_BLIND"] = sizes["third_blind"]
+    return posts
+
+
+def opening_floor(sizes: dict[str, float]) -> float:
+    return max(forced_blind_posts(sizes).values())
+
+
+def largest_raise_to(history: list[dict[str, Any]], default: float = 1.0) -> float:
     return max(
         (number_or_none(item.get("amount_bb")) or 0.0 for item in history if item.get("action") in raise_actions()),
-        default=1.0,
+        default=default,
     )
 
 

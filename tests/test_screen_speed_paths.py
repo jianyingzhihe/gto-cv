@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import subprocess
+
 import numpy as np
 
 from gto_cli.screen_vision import (
+    runtime_build_info,
     should_refresh_dealer_button,
     should_reuse_stable_ocr,
     should_write_overlay_snapshot,
@@ -15,6 +18,18 @@ def test_screen_vision_imports_the_shared_timing_helper() -> None:
     from gto_cli import screen_vision
 
     assert screen_vision.elapsed_ms(0.0) >= 0.0
+
+
+def test_runtime_build_info_records_revision_and_dirty_state(monkeypatch) -> None:
+    responses = iter(
+        [
+            subprocess.CompletedProcess([], 0, stdout="abc123def456\n"),
+            subprocess.CompletedProcess([], 0, stdout=" M gto_cli/video_vision.py\n"),
+        ]
+    )
+    monkeypatch.setattr("gto_cli.screen_vision.subprocess.run", lambda *_args, **_kwargs: next(responses))
+
+    assert runtime_build_info() == {"git_revision": "abc123def456", "git_dirty": True}
 
 
 def test_action_ocr_crop_preserves_full_window_coordinates() -> None:

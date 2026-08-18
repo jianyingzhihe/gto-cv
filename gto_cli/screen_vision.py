@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -41,6 +42,7 @@ from .video_vision import (
     build_layout_profile,
     choose_template,
     detect_action_controls,
+    detect_blind_structure,
     elapsed_ms,
     layout_profile_is_strong,
     layout_profile_quality,
@@ -71,6 +73,8 @@ AUTO_BBOX_SCORE_MAX_WIDTH = 1280
 # The controls live in the lower-right part of the manually selected full
 # client. OCR uses this crop, then restores box coordinates to the full client.
 ACTION_OCR_ROI = (0.40, 0.82, 1.0, 1.0)
+BLIND_STRUCTURE_TITLE_ROI = (0.0, 0.0, 1.0, 0.12)
+BLIND_STRUCTURE_PROBE_LIMIT = 3
 # 相邻两张牌桌图像几乎一致时，只复用一次光学字符识别（OCR）结果；
 # 下一帧必定重读，防止缩小后的画面比较遗漏细小变化。
 STABLE_OCR_MAX_VISUAL_DIFF = 0.12
@@ -86,6 +90,34 @@ def active_python_gto_command() -> str:
 
 def pin_command_to_active_python(command: str) -> str:
     return command.replace("python gto.py", active_python_gto_command())
+
+
+def runtime_build_info() -> dict[str, Any]:
+    """Record the exact checkout behind a live evidence bundle when Git is available."""
+
+    root = Path(__file__).resolve().parent.parent
+    try:
+        revision = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        ).stdout.strip()
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            ).stdout.strip()
+        )
+        return {"git_revision": revision or None, "git_dirty": dirty}
+    except (OSError, subprocess.SubprocessError):
+        return {"git_revision": None, "git_dirty": None}
 
 
 def analyze_screen_stream(
@@ -140,6 +172,7 @@ def analyze_screen_stream(
     started_at = time.perf_counter()
     session_id = time.strftime("%Y%m%d_%H%M%S") + f"_{time.time_ns() % 1_000_000:06d}"
     session_started_local = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    build_info = runtime_build_info()
     output_dir = Path(output_dir)
     frames_dir = output_dir / "event_frames"
     annotated_dir = output_dir / "event_annotated"
@@ -223,6 +256,8 @@ def analyze_screen_stream(
     table_ocr_cache: list[Any] | None = None
     table_ocr_reuse_streak = 0
     table_ocr_cache_uses = 0
+    blind_structure_cache: dict[str, Any] | None = None
+    blind_structure_probe_attempts = 0
     hero_card_cache: dict[str, Any] | None = None
     preflop_tracker = PreflopActionTracker()
     last_console_signature: str | None = None
@@ -651,6 +686,27 @@ def analyze_screen_stream(
                     screen_timing["capture_and_crop_ms"] = elapsed_ms(capture_started)
                     processed_frames += 1
 
+                    if (
+                        blind_structure_cache is None
+                        and ocr is not None
+                        and blind_structure_probe_attempts < BLIND_STRUCTURE_PROBE_LIMIT
+                    ):
+                        blind_probe_started = time.perf_counter()
+                        blind_structure_probe_attempts += 1
+                        title_ocr = run_ocr_in_roi(
+                            outer_frame,
+                            ocr,
+                            BLIND_STRUCTURE_TITLE_ROI,
+                            scale=1.0,
+                        )
+                        candidate_structure = detect_blind_structure(
+                            title_ocr,
+                            frame_height=outer_frame.shape[0],
+                        )
+                        if candidate_structure.get("kind") == "three_blind":
+                            blind_structure_cache = candidate_structure
+                        screen_timing["blind_structure_probe_ms"] = elapsed_ms(blind_probe_started)
+
                     visual_small = cv2.resize(frame, (160, 112), interpolation=cv2.INTER_AREA)
                     visual_gray = cv2.cvtColor(visual_small, cv2.COLOR_BGR2GRAY)
                     visual_diff = 0.0 if previous_visual is None else float(cv2.absdiff(visual_gray, previous_visual).mean())
@@ -756,6 +812,7 @@ def analyze_screen_stream(
                                 cards_hint=cards_hint,
                                 ocr_scale=ocr_scale,
                                 layout_profile=active_layout_profile,
+                                blind_structure_hint=blind_structure_cache,
                             )
                             frame_result_for_event = frame_result
                             if refresh_dealer:
@@ -778,11 +835,14 @@ def analyze_screen_stream(
                                 cards_hint=cards_hint,
                                 ocr_scale=ocr_scale,
                                 layout_profile=active_layout_profile,
+                                blind_structure_hint=blind_structure_cache,
                             )
                             frame_result_for_event = frame_result
                             used_dealer_cache = True
                         if used_dealer_cache:
                             dealer_cache_uses += 1
+                        if (frame_result.get("blind_structure") or {}).get("kind") == "three_blind":
+                            blind_structure_cache = frame_result["blind_structure"]
                         if trigger == "frame" and cards_hint is None:
                             card_roi_cache = frame_result.get("cards")
                         fresh_ocr_result = frame_result.pop("_ocr_result", None)
@@ -1062,6 +1122,7 @@ def analyze_screen_stream(
                             "session_started_local": session_started_local,
                             "elapsed_sec": round(float(timestamp), 3),
                             "processed_frame_index": processed_frames - 1,
+                            **build_info,
                         }
                         serialized_state = json.dumps(state, ensure_ascii=False, separators=(",", ":")) + "\n"
                         stream.write(serialized_state)
@@ -1111,6 +1172,7 @@ def analyze_screen_stream(
         "recording": {
             "session_id": session_id,
             "session_started_local": session_started_local,
+            **build_info,
         },
         "trigger": trigger,
         "console_mode": console_mode,
@@ -1129,6 +1191,8 @@ def analyze_screen_stream(
         "dealer_refresh_frames": dealer_refresh_frames,
         "dealer_cache_uses": dealer_cache_uses,
         "table_ocr_cache_uses": table_ocr_cache_uses,
+        "blind_structure_probe_attempts": blind_structure_probe_attempts,
+        "blind_structure": blind_structure_cache or {"kind": "two_blind", "source": "default"},
         "saved_problem_frames": saved_problem_frames,
         "saved_card_debug_samples": saved_card_debug_samples,
         "record_card_samples": record_live_card_samples,

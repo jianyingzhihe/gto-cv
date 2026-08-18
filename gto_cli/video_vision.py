@@ -108,6 +108,8 @@ BOARD_CARD_ROIS = (
     (0.630, 0.407, 0.708, 0.574),
 )
 
+THREE_BLIND_POSITIONS_8 = ("BTN", "SB", "BB", "THIRD_BLIND", "UTG", "LJ", "HJ", "CO")
+
 BOARD_RANK_WINDOWS = (
     (0, 0, 55, 60),
     (0, 0, 64, 72),
@@ -181,6 +183,7 @@ def analyze_video(
 
     ocr = load_ocr()
     results: list[dict[str, Any]] = []
+    blind_structure_cache: dict[str, Any] | None = None
     times = sample_times(float(start_sec), float(end_sec), every_sec, max_frames)
     for index, timestamp in enumerate(times):
         frame_index = int(round(timestamp * fps))
@@ -200,7 +203,10 @@ def analyze_video(
                 seat_count=seat_count,
                 min_confidence=min_confidence,
                 ocr=ocr,
+                blind_structure_hint=blind_structure_cache,
             )
+            if (frame_result.get("blind_structure") or {}).get("kind") == "three_blind":
+                blind_structure_cache = frame_result["blind_structure"]
             frame_result["ok"] = True
         except Exception as error:
             frame_result = {"ok": False, "error": str(error)}
@@ -259,6 +265,7 @@ def analyze_video_frame(
     cards_hint: dict[str, Any] | None = None,
     ocr_scale: float = 1.0,
     layout_profile: dict[str, Any] | None = None,
+    blind_structure_hint: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     started_at = time.perf_counter()
     timing: dict[str, float] = {}
@@ -275,7 +282,6 @@ def analyze_video_frame(
     step_started = time.perf_counter()
     seats = build_seats(width, height, seat_count)
     dealer_index = nearest_seat_index(button["center"], seats)
-    positions = POSITION_ORDER_BY_SEATS[seat_count]
     timing["seats_ms"] = elapsed_ms(step_started)
     step_started = time.perf_counter()
     if ocr_result_hint is None:
@@ -287,6 +293,12 @@ def analyze_video_frame(
         ocr_result = ocr_result_hint
         timing["ocr_ms"] = 0.0
         timing["ocr_cached"] = 1.0
+    blind_structure = detect_blind_structure(ocr_result, frame_height=height)
+    if (
+        blind_structure.get("kind") == "two_blind"
+        and (blind_structure_hint or {}).get("kind") == "three_blind"
+    ):
+        blind_structure = {**blind_structure_hint, "source": "cached_table_title"}
     step_started = time.perf_counter()
     pot = detect_pot(frame, ocr_result)
     bets = detect_bets(frame, seats, ocr_result=ocr_result, pot=pot)
@@ -309,11 +321,20 @@ def analyze_video_frame(
     timing["card_status_ms"] = elapsed_ms(step_started)
     step_started = time.perf_counter()
 
+    position_order = (
+        THREE_BLIND_POSITIONS_8
+        if seat_count == 8 and blind_structure.get("kind") == "three_blind"
+        else POSITION_ORDER_BY_SEATS[seat_count]
+    )
     for seat in seats:
         offset = (seat["index"] - dealer_index) % seat_count
-        position = positions[offset]
+        position = position_order[offset]
         seat["distance_from_dealer_clockwise"] = offset
-        seat["preflop_action_order"] = action_order_number(offset, seat_count, "preflop")
+        seat["preflop_action_order"] = (
+            three_blind_action_order_number(offset, seat_count)
+            if blind_structure.get("kind") == "three_blind"
+            else action_order_number(offset, seat_count, "preflop")
+        )
         seat["postflop_action_order"] = action_order_number(offset, seat_count, "postflop")
         seat["position"] = position
         seat["gto_position"] = to_gto_position(position)
@@ -350,6 +371,7 @@ def analyze_video_frame(
         "pot": pot,
         "cards": cards,
         "action_controls": action_controls,
+        "blind_structure": blind_structure,
         "seats": seats,
         "detected_bets": list(bets.values()),
         "timing_ms": timing,
@@ -359,6 +381,51 @@ def analyze_video_frame(
     if return_ocr_result:
         result["_ocr_result"] = ocr_result
     return result
+
+
+def detect_blind_structure(ocr_result: list[Any], frame_height: int) -> dict[str, Any]:
+    """Read a three-value table title such as 0.20/0.50/1 as three forced blinds."""
+
+    pattern = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)(?![\d.])")
+    for item in ocr_result:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        box = item[0]
+        text = str(item[1] or "")
+        try:
+            top = min(float(point[1]) for point in box)
+        except (TypeError, ValueError, IndexError):
+            continue
+        if top > max(40.0, frame_height * 0.10):
+            continue
+        match = pattern.search(text)
+        if match is None:
+            continue
+        values = [float(value) for value in match.groups()]
+        if not (0 < values[0] < values[1] < values[2]):
+            continue
+        posts_bb = [round(value / values[1], 2) for value in values]
+        if not (0.15 <= posts_bb[0] <= 0.75 and 1.4 <= posts_bb[2] <= 3.0):
+            continue
+        return {
+            "kind": "three_blind",
+            "source": "table_title_ocr",
+            "title_text": text,
+            "display_values": values,
+            "posts_bb": {
+                "SB": posts_bb[0],
+                "BB": posts_bb[1],
+                "THIRD_BLIND": posts_bb[2],
+            },
+        }
+    return {"kind": "two_blind", "source": "default"}
+
+
+def three_blind_action_order_number(distance_from_dealer: int, seat_count: int) -> int:
+    """Act after the third forced blind, leaving that blind with the final option."""
+
+    offsets = [*range(4, seat_count), 0, 1, 2, 3]
+    return offsets.index(distance_from_dealer) + 1
 
 
 def elapsed_ms(started_at: float) -> float:

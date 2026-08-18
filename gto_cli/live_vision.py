@@ -93,6 +93,7 @@ def analyze_realtime_video(
     previous_visual: Any | None = None
     last_visual_event_sec = float("-inf")
     dealer_button_cache: dict[str, Any] | None = None
+    blind_structure_cache: dict[str, Any] | None = None
     last_dealer_refresh_sample = -10**9
     card_roi_cache_signature: str | None = None
     card_roi_cache: dict[str, Any] | None = None
@@ -161,7 +162,10 @@ def analyze_realtime_video(
                     dealer_button_hint=None if refresh_dealer else dealer_button_cache,
                     cards_hint=cards_hint,
                     ocr_scale=ocr_scale,
+                    blind_structure_hint=blind_structure_cache,
                 )
+                if (frame_result.get("blind_structure") or {}).get("kind") == "three_blind":
+                    blind_structure_cache = frame_result["blind_structure"]
                 if refresh_dealer:
                     dealer_button_cache = frame_result.get("dealer_button")
                     last_dealer_refresh_sample = sample_index
@@ -357,6 +361,7 @@ def build_realtime_state(
             "to_call_bb": to_call,
             "board": board,
             "board_pending": board_pending,
+            "blind_structure": frame_result.get("blind_structure") or {"kind": "two_blind", "source": "default"},
         },
         "hero": {
             "seat_index": hero.get("seat_index"),

@@ -83,6 +83,13 @@ def build_gto_advice(
         )
 
     street = str(table.get("street") or street_from_board(board)).lower()
+    tracker_reason = str((state.get("preflop_tracker") or {}).get("reason") or "")
+    if street == "preflop" and tracker_reason == "three_blind_option_not_supported":
+        return not_ready(
+            "preflop_scenario_not_supported",
+            preflop_tracker=state.get("preflop_tracker"),
+            summary="WAIT: Hero is the third forced blind; this check/raise option is not covered by the current strategy.",
+        )
     raw_pot_bb = as_float(table.get("pot_bb"), None)
     if street != "preflop" and (raw_pot_bb is None or raw_pot_bb <= 0):
         return not_ready(
