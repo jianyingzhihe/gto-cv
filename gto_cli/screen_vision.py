@@ -50,6 +50,7 @@ from .video_vision import (
     load_ocr,
     normalized_suit_component,
     normalized_suit_component_by_label,
+    run_blind_structure_title_ocr,
     run_ocr,
     run_ocr_in_roi,
     scale_roi,
@@ -73,7 +74,6 @@ AUTO_BBOX_SCORE_MAX_WIDTH = 1280
 # The controls live in the lower-right part of the manually selected full
 # client. OCR uses this crop, then restores box coordinates to the full client.
 ACTION_OCR_ROI = (0.40, 0.82, 1.0, 1.0)
-BLIND_STRUCTURE_TITLE_ROI = (0.0, 0.0, 1.0, 0.12)
 BLIND_STRUCTURE_PROBE_LIMIT = 3
 # 相邻两张牌桌图像几乎一致时，只复用一次光学字符识别（OCR）结果；
 # 下一帧必定重读，防止缩小后的画面比较遗漏细小变化。
@@ -693,12 +693,7 @@ def analyze_screen_stream(
                     ):
                         blind_probe_started = time.perf_counter()
                         blind_structure_probe_attempts += 1
-                        title_ocr = run_ocr_in_roi(
-                            outer_frame,
-                            ocr,
-                            BLIND_STRUCTURE_TITLE_ROI,
-                            scale=1.0,
-                        )
+                        title_ocr = run_blind_structure_title_ocr(outer_frame, ocr)
                         candidate_structure = detect_blind_structure(
                             title_ocr,
                             frame_height=outer_frame.shape[0],

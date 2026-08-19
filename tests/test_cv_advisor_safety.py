@@ -48,6 +48,23 @@ def test_call_amount_larger_than_effective_stack_is_rejected() -> None:
     assert source == "table_bets_rejected_control_amount"
 
 
+def test_visible_button_call_above_configured_stack_has_an_explicit_wait_reason() -> None:
+    state = postflop_state(pot_bb=301.0)
+    state["action_controls"] = {
+        "visible": True,
+        "actions": ["fold", "call"],
+        "call_amount_bb": 138.0,
+        "call_amount_evidence": "button_row_ocr",
+    }
+    state["table"].update({"street": "turn", "to_call_bb": 0.0, "board": ["5s", "7s", "Qs", "Th"]})
+
+    advice = build_gto_advice(state, effective_stack_bb=100)
+
+    assert not advice["ready"]
+    assert advice["reason"] == "configured_effective_stack_too_small"
+    assert advice["visible_call_amount_bb"] == 138.0
+
+
 def test_small_hero_blind_is_rejected_when_table_call_is_larger() -> None:
     amount, source = action_to_call(
         {"actions": ["fold", "call", "raise"], "call_amount_bb": 0.4},

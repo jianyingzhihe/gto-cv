@@ -6,7 +6,12 @@ import numpy as np
 
 from gto_cli.cv_advisor import build_gto_advice
 from gto_cli.preflop_tracker import PreflopActionTracker
-from gto_cli.video_vision import analyze_video_frame, detect_blind_structure, three_blind_action_order_number
+from gto_cli.video_vision import (
+    analyze_video_frame,
+    detect_blind_structure,
+    run_blind_structure_title_ocr,
+    three_blind_action_order_number,
+)
 
 
 def seat(name: str, position: str, order: int, status: str, bet: float | None) -> dict:
@@ -79,6 +84,26 @@ def test_table_title_detects_three_forced_blinds() -> None:
     assert result["posts_bb"] == {"SB": 0.4, "BB": 1.0, "THIRD_BLIND": 2.0}
 
 
+def test_tiny_table_title_is_cropped_and_enlarged_before_ocr() -> None:
+    seen_shape = None
+
+    def fake_ocr(image: np.ndarray) -> tuple[list[tuple], float]:
+        nonlocal seen_shape
+        seen_shape = image.shape
+        return [
+            (
+                [[40, 8], [920, 8], [920, 80], [40, 80]],
+                "Fast-8160 - 0.20/0.50/1 - table",
+                0.93,
+            )
+        ], 1.0
+
+    result = run_blind_structure_title_ocr(np.zeros((756, 1080, 3), dtype=np.uint8), fake_ocr)
+
+    assert seen_shape == (104, 2420, 3)
+    assert detect_blind_structure(result, frame_height=756)["kind"] == "three_blind"
+
+
 def test_cached_three_blind_structure_survives_title_ocr_miss() -> None:
     hint = {
         "kind": "three_blind",
@@ -140,6 +165,20 @@ def test_missing_third_blind_is_implied_by_reconciled_pot() -> None:
 
     history = state["preflop"]["action_history"]
     assert [item["action"] for item in history[:-1]] == ["fold", "fold", "raise", "fold", "fold"]
+    assert build_gto_advice(state)["scenario"] == "vs_open"
+
+
+def test_three_blind_seat_that_raised_still_confirms_its_forced_post() -> None:
+    state = three_blind_state(hero_position="BB", hero_order=7)
+    state["hero"].update({"gto_position": "BB", "bet_bb": 1.0})
+    state["seats"][5] = seat("bottom_hero", "BB", 7, "active_or_showdown", 1.0)
+    state["seats"][6] = seat("sb", "SB", 6, "active_or_showdown", 4.8)
+    state["table"].update({"pot_bb": 7.8, "to_call_bb": 3.8})
+    state["action_controls"]["call_amount_bb"] = 3.8
+
+    PreflopActionTracker().update(state)
+
+    assert state["preflop"]["action_history"][-2]["action"] == "raise"
     assert build_gto_advice(state)["scenario"] == "vs_open"
 
 

@@ -421,6 +421,23 @@ def detect_blind_structure(ocr_result: list[Any], frame_height: int) -> dict[str
     return {"kind": "two_blind", "source": "default"}
 
 
+def run_blind_structure_title_ocr(frame: Any, ocr: Any | None) -> list[Any]:
+    """Read the tiny client title from a tight, enlarged crop."""
+
+    if ocr is None:
+        return []
+    cv2, _np = load_cv()
+    height, width = frame.shape[:2]
+    title_height = max(18, min(32, int(round(height * 0.035))))
+    title_width = max(1, int(round(width * 0.56)))
+    crop = frame[:title_height, :title_width]
+    if crop.size == 0:
+        return []
+    scale = 4.0
+    enlarged = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    return scale_ocr_result(run_ocr(enlarged, ocr), 1.0 / scale)
+
+
 def three_blind_action_order_number(distance_from_dealer: int, seat_count: int) -> int:
     """Act after the third forced blind, leaving that blind with the final option."""
 
@@ -698,6 +715,10 @@ def detect_action_controls(frame: Any, ocr_result: list[Any]) -> dict[str, Any]:
     call_amount = best_amount(call_amounts)
     raise_amount = best_amount(raise_amounts)
     detected_labels = {label for label, _box in label_boxes}
+    if call_amount is None:
+        call_amount = amount_inside_labeled_button("call", label_boxes, bottom_texts, action_button_row)
+    if raise_amount is None:
+        raise_amount = amount_inside_labeled_button("raise", label_boxes, bottom_texts, action_button_row)
     if red_buttons:
         # The client leaves pre-action labels such as "call 2BB" visible in
         # gray while only quick-fold is clickable.  Once a red surface was
@@ -715,16 +736,12 @@ def detect_action_controls(frame: Any, ocr_result: list[Any]) -> dict[str, Any]:
         # button surface is visible rather than hiding an otherwise usable row.
         actions = sorted(detected_labels)
         disabled_actions = []
-    if (
-        "call" in actions
-        and "raise" in actions
-        and "fold" not in actions
-        and looks_like_three_action_button_panel(red_buttons)
-    ):
-        # OCR occasionally misses the left label while the three equal red
-        # surfaces are intact. This geometry is specific to FOLD/CALL/RAISE;
-        # the two-button CHECK/BET panel must never gain a synthetic fold.
-        actions = sorted({*actions, "fold"})
+    if looks_like_three_action_button_panel(red_buttons):
+        # This geometry is specific to the standard FOLD/CALL/RAISE panel.
+        # OCR can miss any one of its tiny labels, especially the middle CALL.
+        # The two-button CHECK/BET panel never enters this branch.
+        actions = sorted({*actions, "fold", "call", "raise"})
+        disabled_actions = sorted(detected_labels.difference(actions))
     if "call" in actions and call_amount is None and raise_amount is not None:
         call_amount = infer_truncated_call_amount(truncated_call_prefixes, raise_amount)
     # A bare number is not proof that Hero can act: it can be a stack, a
@@ -747,6 +764,7 @@ def detect_action_controls(frame: Any, ocr_result: list[Any]) -> dict[str, Any]:
         "visible": visible,
         "actions": actions,
         "call_amount_bb": call_amount,
+        "call_amount_evidence": "button_row_ocr" if call_amount is not None and action_button_row else None,
         "raise_amount_bb": raise_amount,
         "red_button_regions": red_buttons,
         "bottom_texts": bottom_texts,
@@ -767,6 +785,28 @@ def label_box_overlaps_button(text_box: dict[str, int], buttons: list[dict[str, 
         if left <= center_x <= right and top <= center_y <= bottom:
             return True
     return False
+
+
+def amount_inside_labeled_button(
+    label: str,
+    label_boxes: list[tuple[str, dict[str, int]]],
+    texts: list[dict[str, Any]],
+    buttons: list[dict[str, Any]],
+) -> float | None:
+    """Join a split action label and amount when both occupy one button."""
+
+    target_buttons = [
+        button
+        for button in buttons
+        if any(item_label == label and label_box_overlaps_button(box, [button]) for item_label, box in label_boxes)
+    ]
+    candidates = []
+    for item in texts:
+        amount = parse_bb_amount(str(item.get("text") or ""))
+        if amount is None or not label_box_overlaps_button(item.get("box") or {}, target_buttons):
+            continue
+        candidates.append((float(item.get("confidence") or 0.0), amount))
+    return best_amount(candidates)
 
 
 def looks_like_three_action_button_panel(buttons: list[dict[str, Any]]) -> bool:

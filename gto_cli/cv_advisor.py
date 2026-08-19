@@ -54,6 +54,22 @@ def build_gto_advice(
             actions=sorted(actions),
             summary="WAIT: Hero can act, but the visible choice includes all-in; this strategy model does not advise all-in decisions.",
         )
+    visible_call_amount = as_float(action_controls.get("call_amount_bb"), None)
+    if (
+        "call" in actions
+        and action_controls.get("call_amount_evidence") == "button_row_ocr"
+        and visible_call_amount is not None
+        and visible_call_amount > effective_stack_bb + 0.15
+    ):
+        return not_ready(
+            "configured_effective_stack_too_small",
+            visible_call_amount_bb=visible_call_amount,
+            configured_effective_stack_bb=effective_stack_bb,
+            summary=(
+                "WAIT: the visible call amount exceeds the configured effective stack; "
+                "increase --effective-stack before using this decision."
+            ),
+        )
 
     hero = state.get("hero") or {}
     table = state.get("table") or {}
@@ -89,6 +105,15 @@ def build_gto_advice(
             "preflop_scenario_not_supported",
             preflop_tracker=state.get("preflop_tracker"),
             summary="WAIT: Hero is the third forced blind; this check/raise option is not covered by the current strategy.",
+        )
+    if street == "preflop" and tracker_reason == "four_bet_or_more_visible_levels":
+        return not_ready(
+            "preflop_scenario_not_supported",
+            preflop_tracker=state.get("preflop_tracker"),
+            summary=(
+                "WAIT: visible investments and the call button prove a four-bet-or-deeper pot, "
+                "but the exact earlier action sequence is unavailable and this strategy does not cover it."
+            ),
         )
     raw_pot_bb = as_float(table.get("pot_bb"), None)
     if street != "preflop" and (raw_pot_bb is None or raw_pot_bb <= 0):

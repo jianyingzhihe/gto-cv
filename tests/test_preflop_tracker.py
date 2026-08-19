@@ -87,6 +87,80 @@ def test_tracker_refuses_to_sync_after_hero_has_already_invested() -> None:
     assert advice["reason"] == "preflop_context_incomplete"
 
 
+def test_tracker_reports_visible_four_bet_depth_without_inventing_history() -> None:
+    state = {
+        "ok": True,
+        "table": {
+            "street": "preflop",
+            "board": [],
+            "pot_bb": 157.0,
+            "to_call_bb": 94.1,
+            "blind_structure": {
+                "kind": "three_blind",
+                "posts_bb": {"SB": 0.4, "BB": 1.0, "THIRD_BLIND": 2.0},
+            },
+        },
+        "hero": {
+            "seat": "bottom_hero",
+            "position": "BTN",
+            "gto_position": "BTN",
+            "preflop_action_order": 5,
+            "cards": ["Ac", "Js"],
+            "bet_bb": 10.9,
+        },
+        "seats": [
+            seat("top", "UTG", 1, "active_or_showdown", 2.0),
+            seat("top_right", "LJ", 2, "folded_or_empty", None),
+            seat("right", "HJ", 3, "folded_or_empty", None),
+            seat("bottom_right", "CO", 4, "folded_or_empty", None),
+            seat("bottom_hero", "BTN", 5, "active_or_showdown", 10.9),
+            seat("bottom_left", "SB", 6, "active_or_showdown", 0.4),
+            seat("left", "BB", 7, "active_or_showdown", 38.0),
+            seat("top_left", "THIRD_BLIND", 8, "active_or_showdown", 105.0),
+        ],
+        "action_controls": {
+            "visible": True,
+            "actions": ["fold", "call", "raise"],
+            "call_amount_bb": 94.4,
+            "call_amount_evidence": "button_row_ocr",
+        },
+        "hero_turn": {"is_turn": True},
+    }
+
+    PreflopActionTracker().update(state)
+
+    assert "preflop" not in state
+    assert state["preflop_tracker"]["reason"] == "four_bet_or_more_visible_levels"
+    advice = build_gto_advice(state)
+    assert not advice["ready"]
+    assert advice["reason"] == "preflop_scenario_not_supported"
+
+
+def test_tracker_does_not_guess_when_only_two_raised_levels_are_visible() -> None:
+    state = state_for_hero_turn(hero_position="CO", hero_order=4, hero_bet=11.3)
+    state["seats"] = [
+        seat("utg", "UTG", 1, "active_or_showdown", 2.0),
+        seat("utg1", "UTG+1", 2, "folded_or_empty", None),
+        seat("hj", "HJ", 3, "active_or_showdown", 2.0),
+        seat("bottom_hero", "CO", 4, "active_or_showdown", 11.3),
+        seat("btn", "BTN", 5, "active_or_showdown", 30.0),
+        seat("sb", "SB", 6, "active_or_showdown", 0.4),
+        seat("bb", "BB", 7, "active_or_showdown", 1.0),
+    ]
+    state["table"].update({"pot_bb": 46.7, "to_call_bb": 18.7})
+    state["table"]["blind_structure"] = {
+        "kind": "three_blind",
+        "posts_bb": {"SB": 0.4, "BB": 1.0, "THIRD_BLIND": 2.0},
+    }
+    state["action_controls"].update({"call_amount_bb": 18.7, "call_amount_evidence": "button_row_ocr"})
+    state["hero_turn"] = {"is_turn": True}
+
+    PreflopActionTracker().update(state)
+
+    assert state["preflop_tracker"]["reason"] == "hero_already_invested_before_sync"
+    assert build_gto_advice(state)["reason"] == "preflop_context_incomplete"
+
+
 def test_tracker_recovers_utg_open_facing_later_three_bet_when_pot_reconciles() -> None:
     state = {
         "ok": True,

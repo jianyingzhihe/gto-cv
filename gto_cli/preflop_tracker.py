@@ -335,6 +335,8 @@ def infer_visible_prehero_history_with_reason(state: dict[str, Any]) -> tuple[li
         reconstructed = infer_cold_call_facing_later_raise(state, sizes, hero_bet)
         if reconstructed is not None:
             return reconstructed, "cold_call_facing_later_raise_reconstructed_from_pot"
+        if visible_four_bet_or_more_depth_confirmed(state, sizes, hero_bet):
+            return None, "four_bet_or_more_visible_levels"
         return None, "hero_already_invested_before_sync"
     if not blind_posts_confirmed(state, sizes):
         if not missing_big_blind_is_safely_implied(state, hero_order, sizes):
@@ -379,6 +381,40 @@ def infer_visible_prehero_history_with_reason(state: dict[str, Any]) -> tuple[li
         history.append(history_event(len(history) + 1, seat, action, amount))
 
     return history, "confirmed"
+
+
+def visible_four_bet_or_more_depth_confirmed(
+    state: dict[str, Any],
+    sizes: dict[str, float],
+    hero_bet: float,
+) -> bool:
+    """Detect unsupported re-raise depth without inventing the missing history."""
+
+    controls = as_dict(state.get("action_controls"))
+    actions = {str(action).lower() for action in list(controls.get("actions") or [])}
+    if not controls.get("visible") or "call" not in actions:
+        return False
+    call_amount = trusted_call_amount(state)
+    if call_amount is None or call_amount <= EPSILON_BB:
+        return False
+
+    floor = opening_floor(sizes)
+    distinct_levels: list[float] = []
+    for seat in ordered_seats(state):
+        amount = number_or_none(seat.get("bet_bb")) or 0.0
+        if amount <= floor + EPSILON_BB:
+            continue
+        if not any(abs(amount - existing) <= EPSILON_BB for existing in distinct_levels):
+            distinct_levels.append(amount)
+    if len(distinct_levels) < 3:
+        return False
+    if not any(abs(hero_bet - amount) <= EPSILON_BB for amount in distinct_levels):
+        return False
+
+    largest_visible = max(distinct_levels)
+    expected_call = largest_visible - hero_bet
+    tolerance = max(0.5, largest_visible * 0.01)
+    return expected_call > EPSILON_BB and abs(call_amount - expected_call) <= tolerance
 
 
 def infer_utg_open_after_later_raises(
@@ -666,6 +702,8 @@ def blind_posts_confirmed(state: dict[str, Any], sizes: dict[str, float]) -> boo
     by_position = {str(seat.get("position") or ""): seat for seat in seats}
     hero_position = str(as_dict(state.get("hero")).get("position") or "")
     forced_posts = forced_blind_posts(sizes)
+    if blind_posts_present_in_raised_pot(state, sizes):
+        return True
     if all(amount_matches(by_position.get(position), expected) for position, expected in forced_posts.items()):
         return True
     bb = by_position.get("BB")

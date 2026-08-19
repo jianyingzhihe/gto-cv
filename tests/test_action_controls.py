@@ -197,6 +197,50 @@ def test_three_button_panel_restores_fold_when_ocr_misses_left_label(monkeypatch
     assert set(controls["actions"]) == {"fold", "call", "raise"}
 
 
+def test_three_button_panel_restores_call_when_ocr_misses_middle_label(monkeypatch) -> None:
+    monkeypatch.setattr(
+        video_vision,
+        "detect_bottom_action_buttons",
+        lambda _frame: [
+            {"x": 10, "y": 84, "width": 30, "height": 15, "area": 400.0},
+            {"x": 45, "y": 84, "width": 30, "height": 15, "area": 400.0},
+            {"x": 80, "y": 84, "width": 30, "height": 15, "area": 400.0},
+        ],
+    )
+    frame = np.zeros((100, 120, 3), dtype=np.uint8)
+    ocr = [
+        ([[14, 86], [36, 86], [36, 96], [14, 96]], "\u5f03\u724c", 0.96),
+        ([[84, 86], [106, 86], [106, 96], [84, 96]], "\u52a0\u6ce8 12BB", 0.96),
+    ]
+
+    controls = video_vision.detect_action_controls(frame, ocr)
+
+    assert set(controls["actions"]) == {"fold", "call", "raise"}
+
+
+def test_two_button_panel_joins_split_call_label_and_amount(monkeypatch) -> None:
+    monkeypatch.setattr(
+        video_vision,
+        "detect_bottom_action_buttons",
+        lambda _frame: [
+            {"x": 10, "y": 80, "width": 45, "height": 19, "area": 700.0},
+            {"x": 65, "y": 80, "width": 45, "height": 19, "area": 700.0},
+        ],
+    )
+    frame = np.zeros((100, 120, 3), dtype=np.uint8)
+    ocr = [
+        ([[15, 83], [43, 83], [43, 94], [15, 94]], "\u5f03\u724c", 0.96),
+        ([[74, 82], [101, 82], [101, 89], [74, 89]], "\u8ddf\u6ce8", 0.92),
+        ([[76, 90], [103, 90], [103, 97], [76, 97]], "138BB", 0.94),
+    ]
+
+    controls = video_vision.detect_action_controls(frame, ocr)
+
+    assert set(controls["actions"]) == {"call", "fold"}
+    assert controls["call_amount_bb"] == 138.0
+    assert controls["call_amount_evidence"] == "button_row_ocr"
+
+
 def test_three_action_buttons_ignore_two_small_slider_buttons_and_hero_blind(monkeypatch) -> None:
     monkeypatch.setattr(
         video_vision,
